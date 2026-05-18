@@ -207,15 +207,59 @@ tr.sel td{background:#eef5ff}
   <div class="tab-bar">
     <button class="tb on" onclick="switchTab('d',this)"><i class="ti ti-layout-dashboard"></i>ダッシュ</button>
     <button class="tb" onclick="switchTab('c',this)"><i class="ti ti-file-text"></i>企業案件</button>
-    <button class="tb" onclick="switchTab('kb',this)"><i class="ti ti-layout-columns"></i>カンバン</button>
     <button class="tb" onclick="switchTab('m',this)"><i class="ti ti-building-community"></i>地方創生</button>
-    <button class="tb" onclick="switchTab('p',this)"><i class="ti ti-user-circle"></i>担当者</button>
+    <button class="tb" onclick="switchTab('kb',this)"><i class="ti ti-layout-columns"></i>カンバン</button>
     <button class="tb" onclick="switchTab('r',this)"><i class="ti ti-report"></i>レポート</button>
     <button class="tb" onclick="switchTab('j',this)"><i class="ti ti-chart-bar"></i>実績</button>
   </div>
   <div class="content" id="content"></div>
 </div>
 <div id="toast" class="toast"></div>
+
+<!-- NEW CASE MODAL -->
+<div id="new-case-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:700;align-items:center;justify-content:center;padding:12px" onclick="if(event.target===this)closeNewCaseModal()">
+  <div style="background:#fff;border-radius:14px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:#fff;z-index:1">
+      <div style="flex:1;font-size:15px;font-weight:600">新規案件を追加</div>
+      <button onclick="closeNewCaseModal()" style="border:none;background:none;cursor:pointer;font-size:18px;color:var(--sub)">✕</button>
+    </div>
+    <div style="padding:16px 18px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">種別</div>
+          <select onchange="newCaseForm.kind=this.value" style="font-size:13px;padding:7px 10px">
+            <option value="GX">GX</option><option value="企業">企業</option>
+          </select>
+        </div>
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">ステータス</div>
+          <select onchange="newCaseForm.status=this.value" style="font-size:13px;padding:7px 10px">
+            ${["最終交渉中","見積作成中","提案中","シミュレーション済","初期商談","見積依頼中","資料提供","商談中","受注済","初期接触","見積提出","失注"].map(s=>`<option>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div style="grid-column:1/-1"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">案件名 <span style="color:#a32d2d">*</span></div>
+          <input placeholder="例：○○社 太陽光導入" oninput="newCaseForm.name=this.value" style="font-size:13px">
+        </div>
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">顧客名 <span style="color:#a32d2d">*</span></div>
+          <input placeholder="例：株式会社○○" oninput="newCaseForm.customer=this.value" style="font-size:13px">
+        </div>
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">担当者</div>
+          <input placeholder="例：田中" oninput="newCaseForm.assignee=this.value" style="font-size:13px">
+        </div>
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">想定収益（円）</div>
+          <input type="number" placeholder="例：5000000" oninput="newCaseForm.revenue=this.value" style="font-size:13px">
+        </div>
+        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">太陽光容量（kW）</div>
+          <input type="number" placeholder="例：50" oninput="newCaseForm.solar=this.value" style="font-size:13px">
+        </div>
+        <div style="grid-column:1/-1"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">備考</div>
+          <textarea placeholder="提案内容・メモなど" oninput="newCaseForm.note=this.value" style="font-size:13px;min-height:56px"></textarea>
+        </div>
+      </div>
+      <button class="btn btn-p" style="width:100%;padding:10px;font-size:13px" onclick="saveNewCase()">
+        <i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:4px"></i>案件を追加する
+      </button>
+    </div>
+  </div>
+</div>
 
 <!-- ACTIVITY POPUP MODAL -->
 <div id="act-modal" onclick="if(event.target===this)closeActModal()">
@@ -300,9 +344,11 @@ function remLabel(s){const d=daysDiff(s);if(d===null)return"";if(d<0)return`<spa
 
 // ═══════════════════ FIREBASE / STORAGE ═══════════════════
 let db=null, localMode=false;
-let acts={}, caseExtra={}, cityExtra={};
+let acts={}, caseExtra={}, cityExtra={}, userCases=[];
 let form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]};
-let tagInput="", dragId=null;
+let newCaseForm={kind:"GX",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
+let tagInput="", dragId=null, editActKey=null, editActId=null;
+function getAllCases(){return[...GXP,...CORP,...userCases];}
 
 function saveConfig(){
   const cfg={
@@ -358,16 +404,22 @@ function setSyncStatus(ok, label){
 function startListeners(){
   db.ref("crm/acts").on("value",snap=>{
     acts=snap.val()||{};
-    ALL_CASES.forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
+    getAllCases().forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
     setSyncStatus(true,"同期済 ✓");
     render();
   });
   db.ref("crm/case_extra").on("value",snap=>{
     caseExtra=snap.val()||{};
-    ALL_CASES.forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
+    getAllCases().forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
     render();
   });
   db.ref("crm/city_extra").on("value",snap=>{cityExtra=snap.val()||{};render();});
+  db.ref("crm/user_cases").on("value",snap=>{
+    const raw=snap.val()||{};
+    userCases=Object.values(raw);
+    userCases.forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
+    render();
+  });
   db.ref(".info/connected").on("value",snap=>{
     if(!snap.val())setSyncStatus(false,"オフライン");
   });
@@ -399,18 +451,18 @@ async function delAct(key,id){
   toast("削除しました");render();
 }
 async function updateCaseStatus(id,st){
-  const p=ALL_CASES.find(x=>x.id===id);if(!p)return;
+  const p=getAllCases().find(x=>x.id===id);if(!p)return;
   p.status=st;if(!caseExtra[id])caseExtra[id]={};caseExtra[id].status=st;
   await setDb("crm/case_extra/"+id, caseExtra[id]);render();
 }
 async function addCaseTag(id,t){
-  const p=ALL_CASES.find(x=>x.id===id);if(!p||!t)return;
+  const p=getAllCases().find(x=>x.id===id);if(!p||!t)return;
   if(!p.tags)p.tags=[];if(!p.tags.includes(t))p.tags.push(t);
   if(!caseExtra[id])caseExtra[id]={};caseExtra[id].tags=p.tags;
   await setDb("crm/case_extra/"+id, caseExtra[id]);render();
 }
 async function removeCaseTag(id,t){
-  const p=ALL_CASES.find(x=>x.id===id);if(!p)return;
+  const p=getAllCases().find(x=>x.id===id);if(!p)return;
   p.tags=(p.tags||[]).filter(x=>x!==t);
   if(!caseExtra[id])caseExtra[id]={};caseExtra[id].tags=p.tags;
   await setDb("crm/case_extra/"+id, caseExtra[id]);render();
@@ -424,13 +476,15 @@ function gsSearch(q){
   const dd=document.getElementById("gs-dd");
   if(!q||q.length<2){dd.style.display="none";return;}
   const results=[];
-  ALL_CASES.forEach(p=>{if(p.name.includes(q)||p.customer.includes(q)||(p.note||"").includes(q)||(p.tags||[]).some(t=>t.includes(q)))
+  getAllCases().forEach(p=>{if(p.name.includes(q)||p.customer.includes(q)||(p.note||"").includes(q)||(p.tags||[]).some(t=>t.includes(q)))
     results.push({type:"案件",icon:"ti-file-text",color:"#0f6e56",title:p.name,sub:p.customer+"・"+p.status,action:`caseSel='${p.id}';switchTabById('c')`});});
   CH.forEach(d=>{if(d.name.includes(q)||(d.issue||"").includes(q)||(d.tags||[]).some(t=>t.includes(q)))
     results.push({type:"自治体",icon:"ti-building-community",color:"#854f0b",title:d.name,sub:"熱さ"+d.heat,action:`citySel='${d.id}';switchTabById('m')`});});
   Object.entries(acts).forEach(([key,list])=>list.forEach(a=>{if((a.detail||"").includes(q)||(a.assignee||"").includes(q)){
-    const src=[...ALL_CASES,...CH].find(x=>x.id===key);
+    const src=[...getAllCases(),...CH].find(x=>x.id===key);
     if(src)results.push({type:"活動",icon:"ti-notes",color:"#534ab7",title:a.detail.slice(0,40),sub:(src.name||src.customer)+"・"+a.date,action:`caseSel='${key}';switchTabById('c')`});}}));
+  JIS.forEach(j=>{if(j.city.includes(q)||(j.r||"").includes(q)||(j.rel||"").includes(q))
+    results.push({type:"実績",icon:"ti-chart-bar",color:"#0f6e56",title:j.city,sub:j.pref+"・"+(j.r||"").slice(0,30),action:`jiQ='${j.city}';switchTabById('j')`});});
   if(!results.length){dd.innerHTML=`<div style="padding:14px;text-align:center;color:var(--sub);font-size:12px">結果なし</div>`;dd.style.display="block";return;}
   dd.innerHTML=results.slice(0,8).map(r=>`<div class="gs-item" onclick="${r.action};document.getElementById('gs').value='';document.getElementById('gs-dd').style.display='none'">
     <div style="width:28px;height:28px;border-radius:50%;background:${r.color}20;display:flex;align-items:center;justify-content:center;flex-shrink:0"><i class="ti ${r.icon}" style="color:${r.color};font-size:13px"></i></div>
@@ -470,6 +524,7 @@ function actPanel(key){
         ${a.assignee?`<span style="font-size:11px;color:var(--sub)"><i class="ti ti-user" style="font-size:11px;vertical-align:-1px;margin-right:2px"></i>${a.assignee}</span>`:""}
         ${a.nextDate?`<span style="font-size:11px">📅 ${a.nextDate} ${remLabel(a.nextDate)}</span>`:""}
         <button class="btn btn-sm btn-d" style="margin-left:auto" onclick="delAct('${sk}','${a.id}')">削除</button>
+        <button class="btn btn-sm" style="padding:3px 8px;font-size:11px" onclick="editActInline('${sk}','${a.id}',this)">編集</button>
       </div>
       <div style="font-size:12px;line-height:1.6;margin-left:33px">${a.detail.replace(/\n/g,"<br>")}</div>
       ${(a.tags||[]).length?`<div style="margin-left:33px;margin-top:4px">${(a.tags||[]).map(t=>`<span class="tag">${t}</span>`).join("")}</div>`:""}
@@ -479,22 +534,22 @@ function actPanel(key){
 // ═══════════════════ TAB SWITCH ═══════════════════
 let curTab="d",caseSel=null,citySel=null,caseQ="",caseSt="すべて",caseKind="すべて",caseTag="",cityQ="",cityH="すべて",jiQ="",jiPr="すべて",profUser="";
 function switchTab(id,el){curTab=id;caseSel=null;citySel=null;document.querySelectorAll(".tb").forEach(b=>b.classList.remove("on"));if(el)el.classList.add("on");render();}
-function switchTabById(id){curTab=id;const ids=["d","c","kb","m","p","r","j"];document.querySelectorAll(".tb").forEach((b,i)=>b.classList.toggle("on",ids[i]===id));render();}
+function switchTabById(id){curTab=id;const ids=["d","c","m","kb","r","j"];document.querySelectorAll(".tb").forEach((b,i)=>b.classList.toggle("on",ids[i]===id));render();}
 
 // ═══════════════════ DASHBOARD ═══════════════════
 function renderD(){
-  const tRev=ALL_CASES.reduce((s,p)=>s+(p.revenue||0),0);
+  const tRev=getAllCases().reduce((s,p)=>s+(p.revenue||0),0);
   const hot=CH.filter(c=>c.heat>=8).length;
   const actTotal=Object.values(acts).reduce((s,a)=>s+a.length,0);
-  const scCnt={};ALL_CASES.forEach(p=>scCnt[p.status]=(scCnt[p.status]||0)+1);
+  const scCnt={};getAllCases().forEach(p=>scCnt[p.status]=(scCnt[p.status]||0)+1);
   const topCh=[...CH].sort((a,b)=>b.heat-a.heat).slice(0,6);
   const reminders=[];
-  Object.entries(acts).forEach(([k,list])=>list.filter(a=>a.nextDate).forEach(a=>{const src=[...ALL_CASES,...CH].find(x=>x.id===k);if(src)reminders.push({name:src.name||src.customer,date:a.nextDate,action:a.action,diff:daysDiff(a.nextDate)});}));
+  Object.entries(acts).forEach(([k,list])=>list.filter(a=>a.nextDate).forEach(a=>{const src=[...getAllCases(),...CH].find(x=>x.id===k);if(src)reminders.push({name:src.name||src.customer,date:a.nextDate,action:a.action,diff:daysDiff(a.nextDate)});}));
   reminders.sort((a,b)=>a.diff-b.diff);
   const upcoming=reminders.filter(r=>r.diff!=null&&r.diff<=7).slice(0,5);
   return`
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:16px">
-    <div class="metric"><div style="font-size:11px;color:var(--blue);margin-bottom:3px"><i class="ti ti-file-text"></i> 案件数</div><div style="font-size:21px;font-weight:600">${ALL_CASES.length}</div><div style="font-size:10px;color:var(--sub)">GX ${GXP.length}/企業 ${CORP.length}</div></div>
+    <div class="metric"><div style="font-size:11px;color:var(--blue);margin-bottom:3px"><i class="ti ti-file-text"></i> 案件数</div><div style="font-size:21px;font-weight:600">${getAllCases().length}</div><div style="font-size:10px;color:var(--sub)">GX ${GXP.length}/企業 ${CORP.length}</div></div>
     <div class="metric"><div style="font-size:11px;color:var(--green);margin-bottom:3px"><i class="ti ti-currency-yen"></i> 想定収益</div><div style="font-size:21px;font-weight:600">¥${(tRev/1e8).toFixed(1)}億</div></div>
     <div class="metric"><div style="font-size:11px;color:var(--amber);margin-bottom:3px"><i class="ti ti-building-community"></i> 地方創生</div><div style="font-size:21px;font-weight:600">${CH.length}</div><div style="font-size:10px;color:var(--sub)">熱さ8+: ${hot}</div></div>
     <div class="metric"><div style="font-size:11px;color:var(--purple);margin-bottom:3px"><i class="ti ti-notes"></i> 活動記録</div><div style="font-size:21px;font-weight:600">${actTotal}</div></div>
@@ -506,14 +561,45 @@ function renderD(){
   <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:7px">案件ステータス</div>
   <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:16px">${Object.entries(scCnt).map(([s,c])=>`<span class="badge ${SC[s]||'bgy'}">${s} ${c}</span>`).join("")}</div>
   <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:7px">熱量TOP自治体</div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px">${topCh.map(c=>`<div style="background:#f8f8f6;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">${hb(c.heat)}<div><div style="font-size:12px;font-weight:500">${c.name}</div><div style="font-size:10px;color:var(--sub)">${(c.tags||[]).slice(0,2).join("・")||"検討中"}</div></div></div>`).join("")}</div>`;
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:16px">${topCh.map(c=>`<div style="background:#f8f8f6;border-radius:8px;padding:8px 10px;display:flex;align-items:center;gap:8px">${hb(c.heat)}<div><div style="font-size:12px;font-weight:500">${c.name}</div><div style="font-size:10px;color:var(--sub)">${(c.tags||[]).slice(0,2).join("・")||"検討中"}</div></div></div>`).join("")}</div>
+  <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:8px">パイプライン ステータス別金額</div>
+  <div style="margin-bottom:16px">${(()=>{
+    const statusRev={};getAllCases().forEach(p=>{if(p.revenue>0)statusRev[p.status]=(statusRev[p.status]||0)+p.revenue;});
+    const sorted=Object.entries(statusRev).sort((a,b)=>b[1]-a[1]).slice(0,6);
+    const max=sorted[0]?.[1]||1;
+    const cols={"最終交渗中":"#a32d2d","見積作成中":"#854f0b","提案中":"#185fa5","シミュレーション済":"#3b6d11","初期商談":"#534ab7","受注済":"#3b6d11","商談中":"#185fa5"};
+    return sorted.map(([s,v])=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:12px">
+      <span style="min-width:80px;text-align:right;font-size:10px;color:var(--sub)">${s}</span>
+      <div style="flex:1;background:#f0f0ee;border-radius:4px;height:16px;overflow:hidden">
+        <div style="width:${v/max*100}%;height:100%;background:${cols[s]||"#185fa5"};border-radius:4px;display:flex;align-items:center;padding:0 6px">
+          <span style="font-size:10px;color:#fff;white-space:nowrap;font-weight:600">${yen(v)}</span>
+        </div>
+      </div>
+    </div>`).join("")||'<div style="font-size:12px;color:var(--sub)">収益データなし</div>';
+  })()}</div>
+  <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:8px">今月の担当者別活動数</div>
+  <div>${(()=>{
+    const now=new Date();const m=now.getMonth(),y=now.getFullYear();
+    const allA=Object.values(acts).flat().filter(a=>{const d=new Date(a.date);return d.getFullYear()===y&&d.getMonth()===m&&a.assignee;});
+    const byUser={};allA.forEach(a=>byUser[a.assignee]=(byUser[a.assignee]||0)+1);
+    const sorted=Object.entries(byUser).sort((a,b)=>b[1]-a[1]);
+    const max=sorted[0]?.[1]||1;
+    return sorted.map(([u,c])=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px;font-size:12px">
+      <span style="min-width:60px;text-align:right;font-size:10px;color:var(--sub)">${u}</span>
+      <div style="flex:1;background:#f0f0ee;border-radius:4px;height:16px;overflow:hidden">
+        <div style="width:${c/max*100}%;height:100%;background:#185fa5;border-radius:4px;display:flex;align-items:center;padding:0 6px">
+          <span style="font-size:10px;color:#fff;font-weight:600">${c}件</span>
+        </div>
+      </div>
+    </div>`).join("")||'<div style="font-size:12px;color:var(--sub)">今月の活動記録なし</div>';
+  })()}</div>`;
 }
 
 // ═══════════════════ 案件管理 ═══════════════════
 function renderC(){
-  const sts=["すべて",...new Set(ALL_CASES.map(p=>p.status))];
-  const allT=[...new Set([...ALL_CASES,...CH].flatMap(x=>x.tags||[]))].sort();
-  const fp=ALL_CASES.filter(p=>(!caseQ||p.name.includes(caseQ)||p.customer.includes(caseQ)||p.assignee.includes(caseQ))&&(caseSt==="すべて"||p.status===caseSt)&&(caseKind==="すべて"||p.kind===caseKind)&&(!caseTag||(p.tags||[]).includes(caseTag)));
+  const sts=["すべて",...new Set(getAllCases().map(p=>p.status))];
+  const allT=[...new Set([...getAllCases(),...CH].flatMap(x=>x.tags||[]))].sort();
+  const fp=getAllCases().filter(p=>(!caseQ||p.name.includes(caseQ)||p.customer.includes(caseQ)||p.assignee.includes(caseQ))&&(caseSt==="すべて"||p.status===caseSt)&&(caseKind==="すべて"||p.kind===caseKind)&&(!caseTag||(p.tags||[]).includes(caseTag)));
   const rows=fp.map(p=>{const next=(acts[p.id]||[]).filter(a=>a.nextDate)[0];const rc=next?remClass(next.nextDate):"";
     return`<tr class="row" onclick="openActModal('${p.id}')">
       <td><span class="badge ${p.kind==="GX"?"bt":"bp"}">${p.kind}</span></td>
@@ -532,6 +618,7 @@ function renderC(){
     <select onchange="caseKind=this.value;render()"><option>すべて</option><option>GX</option><option>企業</option></select>
     <select onchange="caseSt=this.value;render()">${sts.map(s=>`<option${s===caseSt?" selected":""}>${s}</option>`).join("")}</select>
     <select onchange="caseTag=this.value;render()"><option value="">タグ絞込</option>${allT.map(t=>`<option${t===caseTag?" selected":""}>${t}</option>`).join("")}</select>
+    <button class="btn btn-p" onclick="openNewCaseModal()" style="white-space:nowrap;padding:7px 14px;font-size:13px"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>新規案件</button>
   </div>
   <div class="scr"><table><thead><tr><th>種別</th><th>案件名</th><th>顧客名</th><th>担当</th><th>ステータス</th><th style="text-align:right">収益</th><th>タグ</th><th style="text-align:center">活動</th><th>次回アクション</th></tr></thead>
   <tbody>${rows||`<tr><td colspan="9" style="padding:24px;text-align:center;color:var(--sub)">該当なし</td></tr>`}</tbody></table></div>`;
@@ -539,8 +626,8 @@ function renderC(){
 
 // ═══════════════════ カンバン ═══════════════════
 function renderKB(){
-  const stList=[...new Set(ALL_CASES.map(p=>p.status))];
-  const grp={};stList.forEach(s=>grp[s]=[]);ALL_CASES.forEach(p=>grp[p.status]&&grp[p.status].push(p));
+  const stList=[...new Set(getAllCases().map(p=>p.status))];
+  const grp={};stList.forEach(s=>grp[s]=[]);getAllCases().forEach(p=>grp[p.status]&&grp[p.status].push(p));
   return`<div style="font-size:11px;color:var(--sub);margin-bottom:10px">ドラッグしてステータス変更。変更は即座にチームへ同期されます。</div>
   <div id="kanban">${stList.map(s=>`<div class="kb-col" ondragover="event.preventDefault();this.classList.add('drag-target')" ondragleave="this.classList.remove('drag-target')" ondrop="dropCard(event,'${s}');this.classList.remove('drag-target')">
     <div class="kb-col-head"><span class="badge ${SC[s]||'bgy'}">${s}</span><span style="color:var(--sub)">${grp[s].length}</span></div>
@@ -581,11 +668,11 @@ function renderM(){
 
 // ═══════════════════ 担当者 ═══════════════════
 function renderP(){
-  const users=[...new Set([...ALL_CASES.map(p=>p.assignee),...CH.map(c=>c.assignee)])].filter(Boolean).sort();
+  const users=[...new Set([...getAllCases().map(p=>p.assignee),...CH.map(c=>c.assignee)])].filter(Boolean).sort();
   if(!profUser&&users.length)profUser=users[0];
-  const myCases=ALL_CASES.filter(p=>p.assignee===profUser);
+  const myCases=getAllCases().filter(p=>p.assignee===profUser);
   const myActKeys=[...myCases,...CH.filter(c=>c.assignee===profUser)].map(x=>x.id);
-  const myActs=myActKeys.flatMap(k=>(acts[k]||[]).map(a=>({...a,src:[...ALL_CASES,...CH].find(x=>x.id===k)})));
+  const myActs=myActKeys.flatMap(k=>(acts[k]||[]).map(a=>({...a,src:[...getAllCases(),...CH].find(x=>x.id===k)})));
   const now=new Date();const m=now.getMonth(),y=now.getFullYear();
   const thisMonth=myActs.filter(a=>{const d=new Date(a.date);return d.getFullYear()===y&&d.getMonth()===m;});
   const actCnt={};ATYPES.forEach(t=>actCnt[t]=0);thisMonth.forEach(a=>actCnt[a.action]=(actCnt[a.action]||0)+1);
@@ -621,7 +708,7 @@ function renderR(){
   const now=new Date();const m=now.getMonth(),y=now.getFullYear();
   const allActs=Object.entries(acts).flatMap(([k,list])=>list.map(a=>({...a,key:k})));
   const thisMonth=allActs.filter(a=>{const d=new Date(a.date);return d.getFullYear()===y&&d.getMonth()===m;});
-  const wonRev=ALL_CASES.filter(p=>p.status==="受注済").reduce((s,p)=>s+(p.revenue||0),0);
+  const wonRev=getAllCases().filter(p=>p.status==="受注済").reduce((s,p)=>s+(p.revenue||0),0);
   const actByUser={};thisMonth.forEach(a=>{if(a.assignee)actByUser[a.assignee]=(actByUser[a.assignee]||0)+1;});
   const actByType={};thisMonth.forEach(a=>actByType[a.action]=(actByType[a.action]||0)+1);
   return`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
@@ -631,7 +718,7 @@ function renderR(){
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;margin-bottom:20px">
     <div class="metric"><div style="font-size:11px;color:var(--sub);margin-bottom:3px">当月活動件数</div><div style="font-size:24px;font-weight:700;color:var(--blue)">${thisMonth.length}</div></div>
     <div class="metric"><div style="font-size:11px;color:var(--sub);margin-bottom:3px">受注済累計</div><div style="font-size:18px;font-weight:700;color:var(--green)">${yen(wonRev)}</div></div>
-    <div class="metric"><div style="font-size:11px;color:var(--sub);margin-bottom:3px">総案件数</div><div style="font-size:24px;font-weight:700">${ALL_CASES.length}</div></div>
+    <div class="metric"><div style="font-size:11px;color:var(--sub);margin-bottom:3px">総案件数</div><div style="font-size:24px;font-weight:700">${getAllCases().length}</div></div>
     <div class="metric"><div style="font-size:11px;color:var(--sub);margin-bottom:3px">活動担当者数</div><div style="font-size:24px;font-weight:700">${Object.keys(actByUser).length}</div></div>
   </div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
@@ -643,7 +730,7 @@ function renderR(){
     </div>
   </div>
   <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">当月の活動履歴</div>
-  ${thisMonth.slice(0,30).map(a=>{const src=[...ALL_CASES,...CH].find(x=>x.id===a.key);return`<div style="padding:8px 12px;border-bottom:0.5px solid #f0f0ee;font-size:12px;display:flex;align-items:flex-start;gap:8px">
+  ${thisMonth.slice(0,30).map(a=>{const src=[...getAllCases(),...CH].find(x=>x.id===a.key);return`<div style="padding:8px 12px;border-bottom:0.5px solid #f0f0ee;font-size:12px;display:flex;align-items:flex-start;gap:8px">
     <span style="color:var(--sub);white-space:nowrap">${a.date}</span><span class="badge bgy">${a.action}</span>
     <span style="font-weight:500;white-space:nowrap">${src?src.name||src.customer:""}</span>
     <span style="color:var(--sub);flex:1">${a.detail.slice(0,60)}${a.detail.length>60?"…":""}</span>
@@ -664,20 +751,21 @@ function renderJ(){
 
 // ═══════════════════ MODAL ═══════════════════
 function openActModal(id){
-  const src=[...ALL_CASES,...CH].find(x=>x.id===id);
+  const src=[...getAllCases(),...CH].find(x=>x.id===id);
   if(!src)return;
   const modal=document.getElementById('act-modal');
+  modal.dataset.key=id;
   const title=document.getElementById('act-box-title');
   const body=document.getElementById('act-box-body');
-  // Title
   const isCH=CH.some(x=>x.id===id);
+  const isUserCase=src.isUser===true;
   const kindBadge=isCH?`<span class="badge ba">自治体</span>`:`<span class="badge ${(src.kind==='GX')?'bt':'bp'}">${src.kind||''}</span>`;
-  title.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">${kindBadge}<span style="font-size:14px;font-weight:600">${src.name||src.customer||''}</span></div>`;
+  title.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">${kindBadge}<span style="font-size:14px;font-weight:600">${src.name||src.customer||''}</span>${isUserCase?`<button onclick="deleteCase('${id}')" style="margin-left:auto;background:#fce8e8;color:#a32d2d;border:1px solid #f09595;border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">🗑 削除</button>`:""}</div>`;
   if(!isCH){
     title.innerHTML+=`<select onchange="updateCaseStatus('${id}',this.value)" style="width:auto;font-size:12px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff">${["最終交渉中","見積作成中","提案中","シミュレーション済","初期商談","見積依頼中","資料提供","商談中","受注済","初期接触","見積提出","失注"].map(s=>`<option${s===src.status?" selected":""}>${s}</option>`).join("")}</select>`;
   }
   // Build tag selector
-  const allT=[...new Set([...ALL_CASES,...CH].flatMap(x=>x.tags||[]))].sort();
+  const allT=[...new Set([...getAllCases(),...CH].flatMap(x=>x.tags||[]))].sort();
   const presetTags=["太陽光","企業版ふるさと納税","MaaS","ハウス","アクア","EPC","PPA","営農型","フレキシブル","蓄電池","包括連携","復興","観光","B-nozzle","EV","大型","自治体"];
   const allTagsMerged=[...new Set([...presetTags,...allT])].sort();
   const curTags=src.tags||[];
@@ -698,6 +786,94 @@ function closeActModal(){
   document.body.style.overflow='';
   render();
 }
+// ═══ 新規案件 CRUD ═══
+async function saveNewCase(){
+  const f=newCaseForm;
+  if(!f.name.trim()||!f.customer.trim()){toast("案件名と顧客名は必須です");return;}
+  const id="uc"+Date.now().toString(36);
+  const p={id,kind:f.kind,name:f.name.trim(),customer:f.customer.trim(),assignee:f.assignee.trim(),
+    status:f.status,solar:Number(f.solar)||0,battery:Number(f.battery)||0,
+    revenue:Number(f.revenue)||0,irr:Number(f.irr)||0,payback:Number(f.payback)||0,
+    note:f.note.trim(),tags:[...f.tags],isUser:true};
+  await setDb("crm/user_cases/"+id, p);
+  newCaseForm={kind:"GX",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
+  document.getElementById('new-case-modal').style.display='none';
+  document.body.style.overflow='';
+  toast("✓ 案件を追加しました");render();
+}
+async function deleteCase(id){
+  if(!confirm("この案件を削除しますか？活動履歴も削除されます。"))return;
+  await setDb("crm/user_cases/"+id, null);
+  await setDb("crm/acts/"+id, null);
+  closeActModal();toast("削除しました");render();
+}
+function openNewCaseModal(){
+  document.getElementById('new-case-modal').style.display='flex';
+  document.body.style.overflow='hidden';
+}
+function closeNewCaseModal(){
+  document.getElementById('new-case-modal').style.display='none';
+  document.body.style.overflow='';
+}
+
+// ═══ 活動履歴 編集 ═══
+function startEditAct(key,id){
+  editActKey=key; editActId=id;
+  const a=(acts[key]||[]).find(x=>x.id===id);
+  if(!a)return;
+  editActForm={date:a.date,action:a.action,detail:a.detail,assignee:a.assignee||"",nextDate:a.nextDate||"",tags:a.tags||[]};
+  // re-render the modal body
+  const bodyEl=document.getElementById('act-box-body');
+  if(bodyEl){
+    const src=[...getAllCases(),...CH].find(x=>x.id===key);
+    openActModal(key); // re-open to refresh
+  }
+}
+async function saveEditAct(){
+  if(!editActKey||!editActId)return;
+  if(!editActForm.detail.trim()){toast("内容を入力してください");return;}
+  const list=acts[editActKey]||[];
+  const idx=list.findIndex(a=>a.id===editActId);
+  if(idx<0)return;
+  list[idx]={...list[idx],...editActForm,tags:[...editActForm.tags]};
+  acts[editActKey]=list;
+  await setDb("crm/acts/"+editActKey, list);
+  editActKey=null; editActId=null; editActForm=null;
+  toast("✓ 活動履歴を更新しました");
+  // refresh modal
+  const openKey=document.getElementById('act-modal').dataset.key;
+  if(openKey)openActModal(openKey);
+}
+function editActInline(key,id,btn){
+  const a=(acts[key]||[]).find(x=>x.id===id);if(!a)return;
+  const card=btn.closest('.act-card');
+  const bodyDiv=card.querySelector('.act-edit-body');
+  if(bodyDiv){bodyDiv.remove();return;}
+  const div=document.createElement('div');div.className='act-edit-body';
+  div.style.cssText='margin-top:8px;background:#f0f7ff;border-radius:8px;padding:10px;';
+  div.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">日付</div><input type="date" value="${a.date}" onchange="a.date=this.value" style="font-size:12px;padding:5px 8px"></div>
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">アクション</div><select onchange="a.action=this.value" style="font-size:12px;padding:5px 8px">${['訪問','電話','メール','オンライン会議','打ち合わせ','資料送付','見積提出','その他'].map(t=>`<option${t===a.action?' selected':''}>${t}</option>`).join('')}</select></div>
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">次回アクション日</div><input type="date" value="${a.nextDate||''}" onchange="a.nextDate=this.value" style="font-size:12px;padding:5px 8px"></div>
+    </div>
+    <div style="margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">内容</div><textarea style="font-size:12px;padding:6px 8px;min-height:56px;line-height:1.5" onchange="a.detail=this.value">${a.detail}</textarea></div>
+    <div style="margin-bottom:8px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">担当者</div><input value="${a.assignee||''}" onchange="a.assignee=this.value" style="font-size:12px;padding:5px 8px"></div>
+    <div style="display:flex;gap:6px;justify-content:flex-end">
+      <button class="btn" style="font-size:12px;padding:5px 12px" onclick="this.closest('.act-edit-body').remove()">キャンセル</button>
+      <button class="btn btn-p" style="font-size:12px;padding:5px 12px" onclick="saveInlineAct('${key}','${id}',this)">保存</button>
+    </div>`;
+  card.appendChild(div);
+}
+async function saveInlineAct(key,id,btn){
+  const list=acts[key]||[];
+  await setDb("crm/acts/"+key, list.length?list:null);
+  toast("✓ 更新しました");
+  btn.closest('.act-edit-body').remove();
+  openActModal(key);
+}
+function cancelEditAct(){editActKey=null;editActId=null;editActForm=null;const ok=document.getElementById('act-modal').dataset.key;if(ok)openActModal(ok);}
+
 function toggleTagModal(id,tag){
   const isCH=CH.some(x=>x.id===id);
   if(isCH){
@@ -708,7 +884,7 @@ function toggleTagModal(id,tag){
     if(!cityExtra[id])cityExtra[id]={};cityExtra[id].tags=c.tags;
     setDb('crm/city_extra/'+id,cityExtra[id]);
   } else {
-    const p=ALL_CASES.find(x=>x.id===id);if(!p)return;
+    const p=getAllCases().find(x=>x.id===id);if(!p)return;
     if(!p.tags)p.tags=[];
     const idx=p.tags.indexOf(tag);
     if(idx>=0)p.tags.splice(idx,1);else p.tags.push(tag);
@@ -719,7 +895,7 @@ function toggleTagModal(id,tag){
 }
 function renderActModalTags(id){
   // Re-render just the tag select area inside modal
-  const src=[...ALL_CASES,...CH].find(x=>x.id===id);
+  const src=[...getAllCases(),...CH].find(x=>x.id===id);
   if(!src)return;
   const allTagsMerged=[...new Set(["太陽光","企業版ふるさと納税","MaaS","ハウス","アクア","EPC","PPA","営農型","フレキシブル","蓄電池","包括連携","復興","観光","B-nozzle","EV","大型","自治体",...(src.tags||[])].sort())];
   const curTags=src.tags||[];
@@ -736,7 +912,7 @@ function render(){
       <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:8px">カンバン</div>${renderKB()}</div>
     </div>`;
   } else {
-    body=curTab==="c"?renderC():curTab==="kb"?renderKB():curTab==="m"?renderM():curTab==="p"?renderP():curTab==="r"?renderR():renderJ();
+    body=curTab==="c"?renderC():curTab==="kb"?renderKB():curTab==="m"?renderM():curTab==="r"?renderR():renderJ();
   }
   document.getElementById("content").innerHTML=body;
 }
