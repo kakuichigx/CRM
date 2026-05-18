@@ -182,7 +182,7 @@ tr.sel td{background:var(--blue-light)}
 <body>
 
 <!-- SETUP MODAL -->
-<div id="setup-modal">
+<div id="setup-modal" style="display:none">
   <div id="setup-box">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
       <div style="width:36px;height:36px;border-radius:9px;background:#e6f1fb;display:flex;align-items:center;justify-content:center"><i class="ti ti-database" style="color:var(--blue);font-size:20px"></i></div>
@@ -250,7 +250,7 @@ tr.sel td{background:var(--blue-light)}
 </div>
 
 <!-- HEADER -->
-<div id="hdr" style="display:none">
+<div id="hdr">
   <div class="logo"><i class="ti ti-bolt"></i></div>
   <h1>GX × 地方創生 CRM</h1>
   <div id="gs-wrap">
@@ -264,7 +264,7 @@ tr.sel td{background:var(--blue-light)}
   </div>
 </div>
 
-<div id="wrap" style="display:none">
+<div id="wrap">
   <div class="tab-bar">
     <button class="tb on" onclick="switchTab('d',this)"><i class="ti ti-layout-dashboard"></i>ダッシュ</button>
     <button class="tb" onclick="switchTab('c',this)"><i class="ti ti-file-text"></i>企業案件</button>
@@ -490,9 +490,6 @@ function saveConfig(){
 function skipSetup(){
   localMode=true;
   localStorage.setItem("crm_local_mode","1");
-  document.getElementById("setup-modal").style.display="none";
-  document.getElementById("hdr").style.display="flex";
-  document.getElementById("wrap").style.display="block";
   loadLocal();
   setSyncStatus(false,"ローカルモード");
   render();
@@ -503,9 +500,6 @@ function initFirebase(cfg){
     if(firebase.apps.length===0)firebase.initializeApp(cfg);
     else firebase.app();
     db=firebase.database();
-    document.getElementById("setup-modal").style.display="none";
-    document.getElementById("hdr").style.display="flex";
-    document.getElementById("wrap").style.display="block";
     setSyncStatus(null,"接続中…");
     startListeners();
     render();
@@ -589,8 +583,9 @@ async function addActDOM(key){
   const action=document.getElementById('ap-action')?.value||'訪問';
   const assignee=document.getElementById('ap-assignee')?.value?.trim()||'';
   const nextDate=document.getElementById('ap-nextdate')?.value||'';
+  const countVal=action==='見積提出'?Math.max(1,parseInt(document.getElementById('ap-count')?.value||'1',10)):1;
   if(!detail){toast("内容を入力してください");document.getElementById('ap-detail')?.focus();return;}
-  const entry={id:Date.now().toString(36),date,action,detail,assignee,nextDate,tags:[..._apTags]};
+  const entry={id:Date.now().toString(36),date,action,detail,assignee,nextDate,tags:[..._apTags],count:countVal};
   if(!acts[key])acts[key]=[];
   acts[key].unshift(entry);
   await setDb("crm/acts/"+key, acts[key]);
@@ -714,7 +709,7 @@ function actPanel(key){
       </div>
       <div>
         <div class="flabel">アクション種別</div>
-        <select id="ap-action">
+        <select id="ap-action" onchange="const w=document.getElementById('ap-count-wrap');if(w)w.style.display=this.value==='見積提出'?'block':'none'">
           ${ATYPES.map(t=>`<option>${t}</option>`).join("")}
         </select>
       </div>
@@ -727,7 +722,7 @@ function actPanel(key){
       <div class="flabel">活動内容 <span style="color:var(--red)">*</span></div>
       <textarea id="ap-detail" placeholder="面談・提案・合意事項などを入力してください…" style="min-height:80px;line-height:1.6"></textarea>
     </div>
-    <div class="fgrid" style="margin-bottom:10px">
+    <div class="fgrid3" style="margin-bottom:10px">
       <div>
         <div class="flabel">担当者</div>
         <input id="ap-assignee" placeholder="例：田中、平山">
@@ -736,7 +731,12 @@ function actPanel(key){
         <div class="flabel">タグ（Enterで追加）</div>
         <input id="ap-tag" placeholder="例：営農型" onkeydown="if(event.key==='Enter'){const v=this.value.trim();if(v){addTagDOM(v);this.value=''}}">
       </div>
+      <div id="ap-count-wrap" style="display:none">
+        <div class="flabel" style="color:var(--amber)">見積件数 <span style="font-weight:400">（この活動で何件？）</span></div>
+        <input id="ap-count" type="number" min="1" value="1" placeholder="件数">
+      </div>
     </div>
+
     <div id="ap-tags" style="margin-bottom:10px;min-height:4px"></div>
     <button class="btn btn-p" style="width:100%;padding:11px;font-size:13px;border-radius:var(--radius)" onclick="addActDOM('${sk}')">
       <i class="ti ti-device-floppy" style="font-size:14px;vertical-align:-2px;margin-right:5px"></i>保存する
@@ -753,6 +753,7 @@ function actPanel(key){
       <div class="act-head">
         <div class="act-ico"><i class="ti ${AICON[a.action]||"ti-notes"}"></i></div>
         <span class="badge bgy">${a.action}</span>
+        ${a.action==='見積提出'&&(a.count||1)>1?`<span class="badge ba" style="font-size:10px">${a.count}件</span>`:''}
         <span style="font-size:12px;font-weight:600">${a.date}</span>
         ${a.assignee?`<span style="font-size:11px;color:var(--sub)"><i class="ti ti-user" style="font-size:11px;vertical-align:-1px;margin-right:2px"></i>${a.assignee}</span>`:""}
         ${a.nextDate?`<span style="font-size:11px">📅 ${a.nextDate} ${remLabel(a.nextDate)}</span>`:""}
@@ -1082,7 +1083,7 @@ function renderD(){
         Object.values(acts).flat().forEach(a=>{
           if(a.action!=="見積提出")return;
           const d=new Date(a.date);
-          if(d>=periodStart&&d<=periodEnd)cnt++;
+          if(d>=periodStart&&d<=periodEnd)cnt+=(a.count||1);
         });
         // 現在ステータスが見積関連の案件数も加算
         const statusCnt=[...getAllCases(),...getAllBankCases()].filter(p=>["見積作成中","見積依頼中","見積提出"].includes(p.status)).length;
@@ -1300,6 +1301,7 @@ function renderA(){
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
               <span style="font-weight:600;font-size:13px">${a.srcName}</span>
               <span class="badge bgy" style="font-size:10px">${a.action}</span>
+              ${a.action==='見積提出'&&(a.count||1)>1?`<span class="badge ba" style="font-size:10px">${a.count}件</span>`:''}
               <span style="font-size:12px;color:var(--sub)">${a.date}</span>
               ${a.assignee?`<span style="font-size:11px;color:var(--sub2)"><i class="ti ti-user" style="font-size:11px;vertical-align:-1px;margin-right:2px"></i>${a.assignee}</span>`:''}
               ${a.nextDate?`<span style="font-size:11px">📅 ${a.nextDate} ${remLabel(a.nextDate)}</span>`:''}
