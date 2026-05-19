@@ -1174,6 +1174,10 @@ function renderActModalTags(id){
 // ═══════════════════ DASHBOARD ═══════════════════
 function renderD(){
   const tRev=getAllCases().reduce((s,p)=>s+(p.revenue||0),0);
+  const allCasesAndBank=[...getAllCases(),...getAllBankCases()];
+  const wonCases=allCasesAndBank.filter(p=>p.status==='受注済');
+  const wonRev=wonCases.reduce((s,p)=>s+(p.orderAmount||p.revenue||0),0);
+  const wonCnt=wonCases.length;
   const hot=getAllCities().filter(c=>c.heat>=8).length;
   const actTotal=Object.values(acts).reduce((s,a)=>s+a.length,0);
   const scCnt={};getAllCases().forEach(p=>scCnt[p.status]=(scCnt[p.status]||0)+1);
@@ -1197,11 +1201,11 @@ function renderD(){
     </div>
     <div class="metric" style="border-left:3px solid var(--green);cursor:pointer" onclick="showBd('revenue')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-        <div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-currency-yen" style="font-size:14px;color:var(--green)"></i></div>
-        <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">想定収益 <i class="ti ti-chevron-right" style="font-size:10px;opacity:.5"></i></span>
+        <div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-trophy" style="font-size:14px;color:var(--green)"></i></div>
+        <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">受注金額 <i class="ti ti-chevron-right" style="font-size:10px;opacity:.5"></i></span>
       </div>
-      <div style="font-size:26px;font-weight:700;letter-spacing:-1px">¥${(tRev/1e8).toFixed(1)}億</div>
-      <div style="font-size:11px;color:var(--sub2);margin-top:2px">全案件合計</div>
+      <div style="font-size:26px;font-weight:700;letter-spacing:-1px;color:var(--green)">¥${(wonRev/1e8).toFixed(2)}億</div>
+      <div style="font-size:11px;color:var(--sub2);margin-top:2px">受注済 ${wonCnt}件</div>
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('cities')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
@@ -1603,13 +1607,21 @@ function showBd(type){
     </div>`).join('')}</div>
     <div style="font-size:11px;color:var(--sub2);text-align:center">クリックで絞り込み</div>`;
   } else if(type==='revenue'){
-    titleText='想定収益 内訳';
-    const items=[...getAllCases()].filter(p=>p.revenue>0).sort((a,b)=>b.revenue-a.revenue);
-    html=items.map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light);cursor:pointer" onclick="openActModal('${p.id}');closeBd()">
-      <span class="badge ${p.kind==='GX'?'bt':'bp'}">${p.kind}</span>
+    titleText='受注金額 内訳';
+    const wonItems=[...getAllCases(),...getAllBankCases()].filter(p=>p.status==='受注済');
+    const totalWon=wonItems.reduce((s,p)=>s+(p.orderAmount||p.revenue||0),0);
+    html=`<div style="text-align:center;padding:12px 0 16px;border-bottom:1px solid var(--border-light);margin-bottom:14px">
+      <div style="font-size:32px;font-weight:700;color:var(--green)">¥${(totalWon/1e8).toFixed(2)}億</div>
+      <div style="font-size:12px;color:var(--sub2);margin-top:4px">受注済 ${wonItems.length}件の合計</div>
+    </div>`+
+    (wonItems.sort((a,b)=>(b.orderAmount||b.revenue||0)-(a.orderAmount||a.revenue||0))
+    .map(p=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-light);cursor:pointer" onclick="openActModal('${p.id}');closeBd()">
+      <span class="badge ${p.kind==='GX'?'bt':p.kind==='銀行'?'bt':'bp'}">${p.kind}</span>
       <span style="flex:1;font-size:13px;font-weight:500">${p.name}</span>
-      <span style="font-weight:700;color:var(--green);white-space:nowrap">${yen(p.revenue)}</span>
-    </div>`).join('')||'<div style="color:var(--sub2);text-align:center;padding:20px">収益データなし</div>';
+      <div style="text-align:right">
+        ${(p.orderAmount||0)>0?`<div style="font-weight:700;color:var(--green);font-size:13px">${yen(p.orderAmount)}</div><div style="font-size:10px;color:var(--sub2)">受注金額</div>`:`<div style="font-weight:600;color:var(--sub);font-size:13px">${yen(p.revenue||0)}</div><div style="font-size:10px;color:var(--sub2)">想定収益</div>`}
+      </div>
+    </div>`).join('')||'<div style="color:var(--sub2);text-align:center;padding:20px">受注済案件がありません</div>');
   } else if(type==='cities'){
     titleText='地方創生 自治体一覧（全'+getAllCities().length+'件）';
     const hot=getAllCities().filter(c=>c.heat>=8);
@@ -1653,20 +1665,26 @@ function showBd(type){
       const src=[...getAllCases(),...getAllBankCases(),...getAllCities()].find(x=>x.id===key);
       list.filter(a=>a.action==='見積提出').forEach(a=>{
         const d=new Date(a.date);
-        if(d>=pStart&&d<=pEnd)mActs.push({...a,srcName:src?src.name||src.customer:'不明'});
+        if(d>=pStart&&d<=pEnd)mActs.push({...a,srcId:key,srcName:src?src.name||src.customer:'不明',srcKind:src?src.kind||'':''});
       });
     });
     mActs.sort((a,b)=>new Date(b.date)-new Date(a.date));
     const total=mActs.reduce((s,a)=>s+(a.count||1),0);
-    html=`<div style="text-align:center;padding:12px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
-      <div style="font-size:32px;font-weight:700;color:${total>=40?'var(--green)':'var(--blue)'}">${total}<span style="font-size:14px;font-weight:400;color:var(--sub2)"> / 40件</span></div>
-      <div style="font-size:11px;color:var(--sub2);margin-top:4px">${pStart.toLocaleDateString('ja-JP')} 〜 ${pEnd.toLocaleDateString('ja-JP')}</div>
+    const pct=Math.min(total/40*100,100);
+    html=`<div style="text-align:center;padding:14px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
+      <div style="font-size:36px;font-weight:700;color:${total>=40?'var(--green)':total>=20?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:15px;font-weight:400;color:var(--sub2)"> / 40件</span></div>
+      <div style="margin:10px 0 6px;background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${total>=40?'var(--green)':total>=20?'var(--amber)':'var(--blue)'};border-radius:6px;transition:width .5s"></div>
+      </div>
+      <div style="font-size:11px;color:var(--sub2)">${pStart.toLocaleDateString('ja-JP')} 〜 ${pEnd.toLocaleDateString('ja-JP')} 締め</div>
     </div>
-    ${mActs.map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
-      <span style="font-size:12px;color:var(--sub2);white-space:nowrap">${a.date}</span>
+    <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">提出した案件一覧（クリックで詳細へ）</div>
+    ${mActs.map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-light);cursor:pointer;transition:background .1s" onclick="openActModal('${a.srcId}');closeBd()" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''">
+      <span style="font-size:11px;color:var(--sub2);white-space:nowrap;min-width:72px">${a.date}</span>
       <span style="flex:1;font-size:13px;font-weight:500">${a.srcName}</span>
       ${(a.count||1)>1?`<span class="badge ba">${a.count}件</span>`:'<span class="badge bgy">1件</span>'}
-    </div>`).join('')||'<div style="text-align:center;padding:20px;color:var(--sub2)">この期間の見積提出がありません</div>'}`;
+      <i class="ti ti-chevron-right" style="font-size:12px;color:var(--sub2)"></i>
+    </div>`).join('')||'<div style="text-align:center;padding:24px;color:var(--sub2)">この期間の見積提出がありません</div>'}`;
   }
 
   title.innerHTML=titleText;
