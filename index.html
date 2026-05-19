@@ -587,6 +587,27 @@ function hb(h){const c=h>=8?"br":h>=5?"ba":h>=2?"bb":"bgy";return`<span class="b
 function sp(v){if(!v)return"";if(v==="済")return`<span class="sp sd">済</span>`;if(v==="強")return`<span class="sp ss">強</span>`;if(v==="弱")return`<span class="sp sw">弱</span>`;return"";}
 function mb(v){return v==="済"||v==="調整中"?`<span class="badge bg">${v}</span>`:`<span class="badge bgy">${v||"−"}</span>`;}
 function today(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+
+// ── 期 (fiscal year) utilities ──
+// 第67期: 2025-05-21〜2026-05-20, 第68期: 2026-05-21〜2027-05-20 ...
+const FISCAL_BASE_YEAR=2025, FISCAL_BASE_KI=67, FISCAL_M=5, FISCAL_D=21;
+function getFiscalKi(dateStr){
+  if(!dateStr)return null;
+  const d=new Date(dateStr),y=d.getFullYear(),m=d.getMonth()+1,dy=d.getDate();
+  const sy=(m>FISCAL_M||(m===FISCAL_M&&dy>=FISCAL_D))?y:y-1;
+  return FISCAL_BASE_KI+(sy-FISCAL_BASE_YEAR);
+}
+function getFiscalPeriod(ki){
+  const sy=FISCAL_BASE_YEAR+(ki-FISCAL_BASE_KI),ey=sy+1;
+  return{ki,label:`第${ki}期`,
+    start:new Date(sy,FISCAL_M-1,FISCAL_D),
+    end:new Date(ey,FISCAL_M-1,FISCAL_D-1,23,59,59),
+    range:`${sy}/${FISCAL_M}/${FISCAL_D}〜${ey}/${FISCAL_M}/${FISCAL_D-1}`};
+}
+function getCurrentKi(){return getFiscalKi(today());}
+function isInKi(dateStr,ki){return getFiscalKi(dateStr)===ki;}
+let dashKi=getCurrentKi();
+let annualGoalOrder=500000000, annualGoalPPA=1000000000;
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400);}
 function actCount(k){return(acts[k]||[]).length;}
 function daysDiff(s){if(!s)return null;const d=new Date(s),n=new Date();n.setHours(0,0,0,0);return Math.floor((d-n)/86400000);}
@@ -727,6 +748,7 @@ function startListeners(){
       if(caseExtra[p.id]?.estimate!==undefined)p.estimate=caseExtra[p.id].estimate;
       if(caseExtra[p.id]?.orderAmount!==undefined)p.orderAmount=caseExtra[p.id].orderAmount;
       if(caseExtra[p.id]?.investAmount!==undefined)p.investAmount=caseExtra[p.id].investAmount;
+      if(caseExtra[p.id]?.closeDate)p.closeDate=caseExtra[p.id].closeDate;
     });
     getAllBankCases().forEach(p=>{
       if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;
@@ -1011,7 +1033,7 @@ function actPanel(key){
         ${a.action==='見積提出'&&(a.count||1)>1?`<span class="badge ba" style="font-size:10px">${a.count}件</span>`:''}
         <span style="font-size:12px;font-weight:600">${a.date}</span>
         ${a.assignee?`<span style="font-size:11px;color:var(--sub)"><i class="ti ti-user" style="font-size:11px;vertical-align:-1px;margin-right:2px"></i>${a.assignee}</span>`:""}
-        ${a.nextDate?`<span style="font-size:11px">📅 ${a.nextDate} ${remLabel(a.nextDate)}</span>`:""}
+        ${a.nextDate?`<span style="font-size:11px;display:flex;align-items:center;gap:5px">📅 ${a.nextDate} ${remLabel(a.nextDate)}<button onclick="clearReminder('${sk}','${a.id}')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:5px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap">✓ 完了</button></span>`:""}
         <button class="btn btn-sm btn-d" style="margin-left:auto" onclick="delAct('${sk}','${a.id}')">削除</button>
         <button class="btn btn-sm" style="padding:3px 8px;font-size:11px" onclick="editActInline('${sk}','${a.id}',this)">編集</button>
       </div>
@@ -1178,17 +1200,20 @@ async function openActModal(id){
         <div><div class="flabel">担当者</div><input id="edit-assignee" value="${src.assignee||""}" style="font-size:12px"></div>
         <div><div class="flabel">ステータス</div><select id="edit-status" style="font-size:12px;padding:5px 8px">${statusList.map(s=>`<option${s===(src.status||"")?" selected":""}>${s}</option>`).join("")}</select></div>
         ${isPPAcase?`
-        <div><div class="flabel">投資金額（円）</div><input id="edit-invest" type="number" value="${src.investAmount||0}" style="font-size:12px"></div>
-        <div><div class="flabel">年間売電収入（円）</div><input id="edit-annual" type="number" value="${src.annualRevenue||0}" style="font-size:12px"></div>
+        <div><div class="flabel">投資金額（円）</div><input id="edit-invest" type="number" value="${src.investAmount??''}" placeholder="0" style="font-size:12px"></div>
+        <div><div class="flabel">年間売電収入（円）</div><input id="edit-annual" type="number" value="${src.annualRevenue??''}" placeholder="0" style="font-size:12px"></div>
+        <div><div class="flabel">契約締結日</div><input id="edit-closedate" type="date" value="${src.closeDate||''}" style="font-size:12px"></div>
         `:!isCH?`
         <div><div class="flabel">見積金額（円）</div><input id="edit-estimate" type="number" value="${src.estimate||0}" style="font-size:12px"></div>
         <div><div class="flabel">受注金額（円）</div><input id="edit-order" type="number" value="${src.orderAmount||0}" style="font-size:12px"></div>
+        <div><div class="flabel">受注日</div><input id="edit-closedate" type="date" value="${src.closeDate||''}" style="font-size:12px"></div>
         `:""}
         <div style="${isCH?"grid-column:1/-1":""}"><div class="flabel">備考 / メモ</div><input id="edit-note" value="${src.note||""}" style="font-size:12px"></div>
       </div>
       <button class="btn btn-p btn-sm" onclick="saveEditBasic('${id}',${isCH},${isBank2x})">
         <i class="ti ti-device-floppy" style="font-size:12px;vertical-align:-1px;margin-right:3px"></i>保存する
       </button>
+      <span style="font-size:10px;color:var(--sub2);margin-left:8px">※ 変更後は必ず「保存する」を押してください</span>
     </div>
   </details>`;
 
@@ -1277,9 +1302,16 @@ async function saveEditBasic(id, isCH, isBank){
     // PPA固有フィールド
     const isPPAedit=src.kind==="PPA"||(src.tags||[]).includes("PPA");
     if(isPPAedit){
-      const investAmount=parseFloat(document.getElementById('edit-invest')?.value)||0;
+      const investEl=document.getElementById('edit-invest');
+      const investAmount=investEl?(investEl.value===''?src.investAmount||0:parseFloat(investEl.value)||0):src.investAmount||0;
+      const annualEl=document.getElementById('edit-annual');
+      const annualRevenue=annualEl?(annualEl.value===''?src.annualRevenue||0:parseFloat(annualEl.value)||0):src.annualRevenue||0;
       src.investAmount=investAmount;
+      src.annualRevenue=annualRevenue;
       caseExtra[id].investAmount=investAmount;
+      caseExtra[id].annualRevenue=annualRevenue;
+      const ppaCloseDateEl=document.getElementById('edit-closedate');
+      if(ppaCloseDateEl&&ppaCloseDateEl.value){src.closeDate=ppaCloseDateEl.value;caseExtra[id].closeDate=ppaCloseDateEl.value;}
       // Also save directly to user_ppa_cases if user-created
       if(src.isUser){
         await setDb("crm/user_ppa_cases/"+id,{...src,investAmount});
@@ -1290,6 +1322,8 @@ async function saveEditBasic(id, isCH, isBank){
       const ordEl=document.getElementById('edit-order');
       if(estEl) { const v=parseFloat(estEl.value); if(!isNaN(v)){src.estimate=v;caseExtra[id].estimate=v;} }
       if(ordEl) { const v=parseFloat(ordEl.value); if(!isNaN(v)){src.orderAmount=v;caseExtra[id].orderAmount=v;} }
+      const cdEl=document.getElementById('edit-closedate');
+      if(cdEl&&cdEl.value){src.closeDate=cdEl.value;caseExtra[id].closeDate=cdEl.value;}
       if(src.isUser){
         if(isBank)await setDb("crm/user_bank_cases/"+id,src);
         else await setDb("crm/user_cases/"+id,src);
@@ -1304,7 +1338,8 @@ async function savePPAField(id, key, rawVal){
   const src=[...getAllPPACases()].find(x=>x.id===id);
   if(!src){toast("案件が見つかりません");return;}
   const numKeys=["contractYears","sites","capacityKw","annualRevenue","unitPrice","investAmount","irr"];
-  const val=numKeys.includes(key)?parseFloat(rawVal)||0:rawVal.trim();
+  // parseFloat handles 0 correctly; use explicit check for empty string
+  const val=numKeys.includes(key)?(rawVal===''?0:parseFloat(rawVal)||0):rawVal.trim();
   src[key]=val;
   // Save to Firebase
   if(src.isUser){
@@ -1324,6 +1359,18 @@ async function deleteStatusHistory(caseId, histKey){
   await db.ref("crm/status_history/"+caseId+"/"+histKey).remove().catch(()=>{});
   toast("履歴を削除しました");
   openActModal(caseId);
+}
+async function clearReminder(caseId, actId){
+  const list=acts[caseId]||[];
+  const a=list.find(x=>x.id===actId);
+  if(!a)return;
+  a.nextDate="";
+  await setDb("crm/acts/"+caseId, list);
+  toast("✓ リマインダーを完了しました");
+  render();
+  // Refresh modal if open
+  const openKey=document.getElementById('act-modal').dataset.key;
+  if(openKey===caseId) openActModal(caseId);
 }
 function closeActModal(){
   document.getElementById('act-modal').classList.remove('open');
@@ -1561,7 +1608,12 @@ function renderActModalTags(id){
 // ═══════════════════ DASHBOARD ═══════════════════
 function renderD(){
   const allCasesAndBank=[...getAllCases(),...getAllBankCases()];
-  const wonCases=allCasesAndBank.filter(p=>p.status==='受注済');
+  // Filter by fiscal year: use closeDate if available, otherwise include all 受注済
+  const wonCases=allCasesAndBank.filter(p=>{
+    if(p.status!=='受注済')return false;
+    if(p.closeDate)return isInKi(p.closeDate,dashKi);
+    return true; // no closeDate = include in current ki
+  });
   const wonRev=wonCases.reduce((s,p)=>s+(p.orderAmount||0),0);
   const wonCnt=wonCases.length;
   const hot=getAllCities().filter(c=>c.heat>=8).length;
@@ -1570,12 +1622,26 @@ function renderD(){
   const topCh=[...getAllCities()].sort((a,b)=>b.heat-a.heat).slice(0,6);
   const reminders=[];
   Object.entries(acts).forEach(([k,list])=>list.filter(a=>a.nextDate).forEach(a=>{
-    const src=[...getAllCases(),...getAllCities()].find(x=>x.id===k);
-    if(src)reminders.push({name:src.name||src.customer,date:a.nextDate,action:a.action,diff:daysDiff(a.nextDate)});
+    const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===k);
+    if(src)reminders.push({name:src.name||src.customer,date:a.nextDate,action:a.action,diff:daysDiff(a.nextDate),caseId:k,actId:a.id});
   }));
   reminders.sort((a,b)=>a.diff-b.diff);
   const upcoming=reminders.filter(r=>r.diff!=null&&r.diff<=7).slice(0,5);
   return`
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:4px;background:#fff;border:1.5px solid var(--border);border-radius:10px;padding:4px 6px">
+      <button onclick="dashKi=Math.max(67,dashKi-1);render()" style="border:none;background:none;cursor:pointer;padding:4px 8px;color:var(--sub);font-size:16px;border-radius:6px" title="前の期">‹</button>
+      <span style="font-size:13px;font-weight:700;padding:2px 10px;color:var(--blue)">${getFiscalPeriod(dashKi).label}</span>
+      <button onclick="dashKi=dashKi+1;render()" style="border:none;background:none;cursor:pointer;padding:4px 8px;color:var(--sub);font-size:16px;border-radius:6px" title="次の期">›</button>
+    </div>
+    <span style="font-size:11px;color:var(--sub2)">${getFiscalPeriod(dashKi).range}</span>
+    ${dashKi!==getCurrentKi()?`<button onclick="dashKi=getCurrentKi();render()" style="font-size:11px;padding:3px 10px;border:1px solid var(--blue);color:var(--blue);background:none;border-radius:6px;cursor:pointer">今期に戻る</button>`:""}
+    <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+      <span style="font-size:11px;color:var(--sub2)">目標設定:</span>
+      <input type="number" placeholder="受注目標(億)" value="${annualGoalOrder?annualGoalOrder/1e8:''}" oninput="annualGoalOrder=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+      <input type="number" placeholder="PPA目標(億)" value="${annualGoalPPA?annualGoalPPA/1e8:''}" oninput="annualGoalPPA=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+    </div>
+  </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:20px">
     <div class="metric" style="border-left:3px solid var(--blue);cursor:pointer" onclick="showBd('cases')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
@@ -1586,12 +1652,13 @@ function renderD(){
       <div style="font-size:11px;color:var(--sub2);margin-top:2px">企業 ${getAllCases().length}</div>
     </div>
     <div class="metric" style="border-left:3px solid var(--green);cursor:pointer" onclick="showBd('revenue')">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
         <div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-trophy" style="font-size:14px;color:var(--green)"></i></div>
         <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">受注金額 <i class="ti ti-chevron-right" style="font-size:10px;opacity:.5"></i></span>
       </div>
-      <div style="font-size:26px;font-weight:700;letter-spacing:-1px;color:var(--green)">¥${(wonRev/1e8).toFixed(2)}億</div>
-      <div style="font-size:11px;color:var(--sub2);margin-top:2px">受注済 ${wonCnt}件</div>
+      <div style="font-size:22px;font-weight:700;letter-spacing:-1px;color:var(--green)">¥${(wonRev/1e8).toFixed(2)}億</div>
+      <div style="font-size:10px;color:var(--sub2);margin-top:1px">受注済 ${wonCnt}件</div>
+      ${annualGoalOrder>0?`<div style="margin-top:6px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${Math.min(wonRev/annualGoalOrder*100,100).toFixed(0)}%;height:100%;background:var(--green);border-radius:4px"></div></div><div style="font-size:10px;color:var(--sub2);margin-top:3px">目標 ${(annualGoalOrder/1e8).toFixed(1)}億 (${Math.min(wonRev/annualGoalOrder*100,100).toFixed(0)}%)</div>`:""}
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('cities')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
@@ -1618,20 +1685,26 @@ function renderD(){
       <div style="font-size:11px;color:var(--sub2);margin-top:2px">件</div>
     </div>
     <div class="metric" style="border-left:3px solid #0ea5e9;cursor:pointer" onclick="switchTab('ppa',document.querySelectorAll('.tb')[3])">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
         <div style="width:28px;height:28px;border-radius:8px;background:#e0f2fe;display:flex;align-items:center;justify-content:center"><i class="ti ti-solar-panel" style="font-size:14px;color:#0ea5e9"></i></div>
         <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">PPA契約総額</span>
       </div>
-      <div style="font-size:20px;font-weight:700;letter-spacing:-1px;color:#0ea5e9">${(()=>{const tot=getAllPPACases().reduce((s,p)=>s+(p.annualRevenue||0)*(p.contractYears||15),0);return tot>0?yen(tot):"−";})()}</div>
-      <div style="font-size:11px;color:var(--sub2);margin-top:2px">${getAllPPACases().length}件・${getAllPPACases().reduce((s,p)=>s+(p.sites||1),0)}サイト</div>
+      <div style="font-size:18px;font-weight:700;color:#0ea5e9">${(()=>{const tot=getAllPPACases().reduce((s,p)=>s+(p.annualRevenue||0)*(p.contractYears||15),0);return tot>0?yen(tot):"−";})()}</div>
+      <div style="font-size:10px;color:var(--sub2);margin-top:1px">${getAllPPACases().length}件・${getAllPPACases().reduce((s,p)=>s+(p.sites||1),0)}サイト</div>
     </div>
     <div class="metric" style="border-left:3px solid var(--red);cursor:pointer" onclick="showBd('ppaInvest')">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
         <div style="width:28px;height:28px;border-radius:8px;background:var(--red-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-coin" style="font-size:14px;color:var(--red)"></i></div>
-        <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">PPA投資総額 <i class="ti ti-chevron-right" style="font-size:10px;opacity:.5"></i></span>
+        <span style="font-size:11px;font-weight:600;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">PPA投資額 <i class="ti ti-chevron-right" style="font-size:10px;opacity:.5"></i></span>
       </div>
-      <div style="font-size:20px;font-weight:700;letter-spacing:-1px;color:var(--red)">${(()=>{const tot=getAllPPACases().reduce((s,p)=>s+(p.investAmount||0),0);return tot>0?yen(tot):"−";})()}</div>
-      <div style="font-size:11px;color:var(--sub2);margin-top:2px">投資金額入力済 ${getAllPPACases().filter(p=>p.investAmount>0).length}件</div>
+      ${(()=>{
+        const kiPPA=getAllPPACases().filter(p=>p.closeDate?isInKi(p.closeDate,dashKi):true);
+        const tot=kiPPA.reduce((s,p)=>s+(p.investAmount||0),0);
+        const pct=annualGoalPPA>0?Math.min(tot/annualGoalPPA*100,100).toFixed(0):null;
+        return`<div style="font-size:18px;font-weight:700;color:var(--red)">${tot>0?yen(tot):"−"}</div>
+        <div style="font-size:10px;color:var(--sub2);margin-top:1px">${kiPPA.filter(p=>p.investAmount>0).length}件</div>
+        ${annualGoalPPA>0?`<div style="margin-top:6px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${pct}%;height:100%;background:var(--red);border-radius:4px"></div></div><div style="font-size:10px;color:var(--sub2);margin-top:3px">目標 ${(annualGoalPPA/1e8).toFixed(1)}億 (${pct}%)</div>`:""}`;
+      })()}
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('mitsumori')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
@@ -1674,7 +1747,10 @@ function renderD(){
   </div>
   ${upcoming.length?`<div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px"><i class="ti ti-bell" style="color:var(--red)"></i> リマインダー（7日以内）</div>
   <div style="margin-bottom:18px">${upcoming.map(r=>`<div class="${r.diff<0?"rem-over":r.diff<=3?"rem-soon":"rem-ok"}" style="padding:10px 14px;border-radius:var(--radius);margin-bottom:6px;display:flex;align-items:center;gap:10px;font-size:12px">
-    <i class="ti ti-calendar" style="font-size:14px;flex-shrink:0"></i><span style="flex:1;font-weight:500">${r.name}</span><span class="badge bgy">${r.action}</span><span>${r.date}</span>${remLabel(r.date)}
+    <i class="ti ti-calendar" style="font-size:14px;flex-shrink:0"></i>
+    <span style="flex:1;font-weight:500;cursor:pointer" onclick="openActModal('${r.caseId}')">${r.name}</span>
+    <span class="badge bgy">${r.action}</span><span>${r.date}</span>${remLabel(r.date)}
+    <button onclick="clearReminder('${r.caseId}','${r.actId}')" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap;flex-shrink:0">✓ 完了</button>
   </div>`).join("")}</div>`:""}
   <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">案件ステータス</div>
   <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px">${Object.entries(scCnt).map(([s,c])=>`<span class="badge ${SC[s]||'bgy'}">${s} ${c}</span>`).join("")}</div>
@@ -1693,6 +1769,35 @@ function renderD(){
       </div>
     </div>`).join("")||'<div style="font-size:12px;color:var(--sub2)">収益データなし</div>';
   })()}</div>
+  <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px;margin-top:8px">期別実績比較</div>
+  <div style="overflow-x:auto;margin-bottom:18px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="padding:6px 12px;background:var(--bg);border-bottom:2px solid var(--border);text-align:left;font-size:10px;color:var(--sub);text-transform:uppercase">期</th>
+        <th style="padding:6px 12px;background:var(--bg);border-bottom:2px solid var(--border);text-align:right;font-size:10px;color:var(--sub);text-transform:uppercase">受注金額</th>
+        <th style="padding:6px 12px;background:var(--bg);border-bottom:2px solid var(--border);text-align:right;font-size:10px;color:var(--sub);text-transform:uppercase">受注件数</th>
+        <th style="padding:6px 12px;background:var(--bg);border-bottom:2px solid var(--border);text-align:right;font-size:10px;color:var(--sub);text-transform:uppercase">PPA投資額</th>
+        <th style="padding:6px 12px;background:var(--bg);border-bottom:2px solid var(--border);text-align:right;font-size:10px;color:var(--sub);text-transform:uppercase">期間</th>
+      </tr></thead>
+      <tbody>${(()=>{
+        const currentKi=getCurrentKi();
+        return [currentKi,currentKi-1].map(ki=>{
+          const fp=getFiscalPeriod(ki);
+          const won=[...getAllCases(),...getAllBankCases()].filter(p=>p.status==='受注済'&&(p.closeDate?isInKi(p.closeDate,ki):ki===currentKi));
+          const wonAmt=won.reduce((s,p)=>s+(p.orderAmount||0),0);
+          const ppaInv=getAllPPACases().filter(p=>p.closeDate?isInKi(p.closeDate,ki):ki===currentKi).reduce((s,p)=>s+(p.investAmount||0),0);
+          const isCurrentKi=ki===dashKi;
+          return`<tr style="border-bottom:1px solid var(--border-light);${isCurrentKi?'background:var(--blue-light);':''}" onclick="dashKi=${ki};render()" class="row">
+            <td style="padding:8px 12px;font-weight:700;color:${isCurrentKi?'var(--blue)':'var(--text)'}">${fp.label}${ki===currentKi?' 📍':''}</td>
+            <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--green)">${wonAmt>0?yen(wonAmt):'−'}</td>
+            <td style="padding:8px 12px;text-align:right">${won.length}件</td>
+            <td style="padding:8px 12px;text-align:right;font-weight:600;color:var(--red)">${ppaInv>0?yen(ppaInv):'−'}</td>
+            <td style="padding:8px 12px;text-align:right;font-size:11px;color:var(--sub2)">${fp.range}</td>
+          </tr>`;
+        }).join('');
+      })()}</tbody>
+    </table>
+  </div>
   <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">今月の担当者別活動数</div>
   <div>${(()=>{
     const now=new Date();const m=now.getMonth(),y=now.getFullYear();
