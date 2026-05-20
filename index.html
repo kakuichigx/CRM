@@ -270,6 +270,7 @@ tr.sel td{background:var(--blue-light)}
     <button class="tb" onclick="switchTab('c',this)"><i class="ti ti-file-text"></i>企業案件</button>
     <button class="tb" onclick="switchTab('b',this)"><i class="ti ti-building-bank"></i>銀行案件</button>
     <button class="tb" onclick="switchTab('m',this)"><i class="ti ti-building-community"></i>地方創生</button>
+    <button class="tb" onclick="switchTab('ppa',this)"><i class="ti ti-solar-panel"></i>PPA案件</button>
     <button class="tb" onclick="switchTab('a',this)"><i class="ti ti-history"></i>活動履歴</button>
   </div>
   <div class="content" id="content"></div>
@@ -442,11 +443,11 @@ const CORP=[
 let ALL_CASES=[...GXP,...CORP];
 const BANKP=[]; // 銀行案件の静的データ（初期は空、ユーザーが追加）
 let userBankCases=[];
-function getAllBankCases(){return[...BANKP,...userBankCases];}
+function getAllBankCases(){return[...BANKP,...userBankCases].filter(x=>!deletedIds.has(x.id));}
 let userPPACases=[];
 function getAllPPACases(){
   const tagged=[...getAllCases(),...getAllBankCases()].filter(p=>(p.tags||[]).includes("PPA")&&!userPPACases.some(x=>x.id===p.id));
-  return[...userPPACases,...tagged];
+  return[...userPPACases.filter(x=>!deletedIds.has(x.id)),...tagged];
 }
 let ppaQ="",ppaSt="すべて",ppaAssignee="すべて";
 let newPPAForm={name:"",customer:"",assignee:"",status:"初期商談",contractYears:15,capacityKw:0,annualRevenue:0,irr:0,sites:1,unitPrice:0,investAmount:0,note:"",tags:[]};
@@ -553,7 +554,7 @@ let acts={}, caseExtra={}, cityExtra={}, userCases=[];
 let form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]};
 let newCaseForm={kind:"企業",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
 let tagInput="", dragId=null, editActKey=null, editActId=null;
-function getAllCases(){return[...GXP,...CORP,...userCases];}
+function getAllCases(){return[...GXP,...CORP,...userCases].filter(x=>!deletedIds.has(x.id));}
 function getAllAssignees(){
   const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
   const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
@@ -613,7 +614,7 @@ let loaded=false;
 let actSearchQ='',actMonthQ='',actAssigneeQ='すべて',actKindQ='すべて',actActionQ='すべて',actShowLimit=50;
 let userCities=[];
 let newCityForm={name:'',heat:5,assignee:'',solar:'',house:'',aqua:'',issue:'',note:'',tags:[]};
-function getAllCities(){return[...CH,...userCities];}
+function getAllCities(){return[...CH,...userCities].filter(x=>!deletedIds.has(x.id));}
 
 function saveConfig(){
   const cfg={
@@ -666,6 +667,11 @@ function startListeners(){
     acts=snap.val()||{};
     getAllCases().forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;if(caseExtra[p.id]?.heat!==undefined)p.heat=caseExtra[p.id].heat;});
     setSyncStatus(true,"同期済 ✓");
+    render();
+  });
+  db.ref("crm/deleted_ids").on("value",snap=>{
+    const raw=snap.val()||{};
+    deletedIds=new Set(Object.keys(raw).filter(k=>raw[k]));
     render();
   });
   db.ref("crm/case_extra").on("value",snap=>{
@@ -980,23 +986,99 @@ function actPanel(key){
 }
 
 
+function buildHistHtml(id, statusHist){
+  if(!statusHist.length)return"";
+  const rows=statusHist.map(h=>{
+    const del=h._key?'<button onclick="deleteStatusHistory(\''+id+'\',\''+h._key+'\')" style="margin-left:auto;border:none;background:none;cursor:pointer;color:#ccc;font-size:13px;padding:2px" onmouseover="this.style.color=\'#dc2626\'" onmouseout="this.style.color=\'#ccc\'">❌</button>':'';
+    return '<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:0.5px solid var(--border-light)"><span style="color:var(--sub2);white-space:nowrap;min-width:78px">'+(h.date||'')+'</span><span class="badge bgy">'+(h.from||'?')+'</span><i class="ti ti-arrow-right" style="font-size:12px;color:var(--sub2)"></i><span class="badge '+(SC[h.to]||'bgy')+'">'+(h.to||'')+'</span>'+del+'</div>';
+  }).join("");
+  return '<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">ステータス変更履歴</div>'+rows+'</div>';
+}
+function makeFlowHtml(flowDef, statusList, updateFn){
+  const firstKey=flowDef[0].key;
+  return`<div style="margin-bottom:14px">
+    <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px;margin-bottom:10px">ステータスフロー</div>
+    <div style="overflow-x:auto;padding-bottom:6px">
+      <div style="display:flex;align-items:stretch;gap:0;min-width:max-content">
+        ${flowDef.map((s,i)=>{
+          const isCurrent=OPEN_MODAL_SRC&&OPEN_MODAL_SRC.status===s.key;
+          const curIdx=flowDef.findIndex(x=>x.key===(OPEN_MODAL_SRC&&OPEN_MODAL_SRC.status));
+          const isDone=curIdx>i&&curIdx>=0;
+          const bg=isCurrent?s.color:isDone?"#e5e7eb":"#f9fafb";
+          const tc=isCurrent?"#fff":isDone?"#6b7280":"#9ca3af";
+          const bc=isCurrent?s.color:isDone?"#d1d5db":"#e5e7eb";
+          const r=i===0?"8px 0 0 8px":i===flowDef.length-1?"0 8px 8px 0":"0";
+          const bl=i>0?"none":"1.5px solid "+bc;
+          return`<div onclick="${updateFn}('${OPEN_MODAL_ID}','${s.key}')" style="cursor:pointer;display:flex;flex-direction:column;align-items:center;position:relative;min-width:76px;padding:9px 6px;background:${bg};border:1.5px solid ${bc};border-left:${bl};border-radius:${r};transition:all .15s" title="${s.desc}">
+            <i class="ti ${s.icon}" style="font-size:15px;color:${tc};margin-bottom:4px"></i>
+            <span style="font-size:10px;font-weight:${isCurrent?"700":"500"};color:${tc};text-align:center;line-height:1.3;white-space:nowrap">${s.label}</span>
+            ${isCurrent&&i>0?`<div onclick="event.stopPropagation();${updateFn}('${OPEN_MODAL_ID}','${flowDef[Math.max(0,i-1)].key}')" style="position:absolute;top:-6px;right:-6px;width:16px;height:16px;background:#6b7280;border-radius:50%;border:2px solid #fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:9px;color:#fff;font-weight:700;z-index:1" title="一つ前に戻す">↩</div>`:""}
+          </div>`;
+        }).join("")}
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--sub2);margin-top:10px;display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap">
+      <span>各ステージをクリックして変更</span>
+      <button onclick="${updateFn}('${OPEN_MODAL_ID}','失注')" style="font-size:11px;color:#dc2626;background:none;border:1px solid #fca5a5;border-radius:5px;cursor:pointer;padding:2px 8px">✕ 失注</button>
+      <button onclick="${updateFn}('${OPEN_MODAL_ID}','${firstKey}')" style="font-size:11px;color:#6b7280;background:none;border:1px solid #d1d5db;border-radius:5px;cursor:pointer;padding:2px 8px">↩ 最初に戻す</button>
+    </div>
+  </div>`;
+}
+let OPEN_MODAL_SRC=null, OPEN_MODAL_ID=null;
+
+async function updateCorpStatus(id,st){
+  const p=getAllCases().find(x=>x.id===id);if(!p)return;
+  const prev=p.status;p.status=st;
+  await saveCase(p);
+  if(prev!==st)await setDb("crm/status_history/"+id+"/"+Date.now().toString(36),{from:prev,to:st,date:today(),ts:Date.now()});
+  toast("ステータス:「"+st+"」");openActModal(id);render();
+}
+async function updateBankStatus(id,st){
+  const p=getAllBankCases().find(x=>x.id===id);if(!p)return;
+  const prev=p.status;p.status=st;
+  await saveCase(p);
+  if(prev!==st)await setDb("crm/status_history/"+id+"/"+Date.now().toString(36),{from:prev,to:st,date:today(),ts:Date.now()});
+  toast("ステータス:「"+st+"」");openActModal(id);render();
+}
+async function updatePPAStatus(id,st){
+  const p=getAllPPACases().find(x=>x.id===id);if(!p)return;
+  const prev=p.status;p.status=st;
+  await saveCase(p);
+  if(prev!==st)await setDb("crm/status_history/"+id+"/"+Date.now().toString(36),{from:prev,to:st,date:today(),ts:Date.now()});
+  toast("ステータス:「"+st+"」");openActModal(id);render();
+}
+async function deleteStatusHistory(caseId, histKey){
+  if(!db)return;
+  await db.ref("crm/status_history/"+caseId+"/"+histKey).remove().catch(()=>{});
+  toast("履歴を削除しました");openActModal(caseId);
+}
+
 async function openActModal(id){
   try{
-  const src=[...getAllCases(),...CH].find(x=>x.id===id);
-  if(!src)return;
+  const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===id);
+  if(!src){toast("案件が見つかりません(id:"+id+")");return;}
+  OPEN_MODAL_SRC=src; OPEN_MODAL_ID=id;
   const modal=document.getElementById('act-modal');
   modal.dataset.key=id;
   const title=document.getElementById('act-box-title');
   const body=document.getElementById('act-box-body');
-  const isCH=CH.some(x=>x.id===id);
-  const isUserCase=src.isUser===true;
-  const kindBadge=isCH?`<span class="badge ba">自治体</span>`:`<span class="badge ${(src.kind==='GX')?'bt':'bp'}">${src.kind||''}</span>`;
+  const isCH=getAllCities().some(x=>x.id===id);
+  const isBank2x=getAllBankCases().some(x=>x.id===id);
+  const isPPAcase2=src.kind==="PPA"||(src.tags||[]).includes("PPA");
+  const isUserCase=src.isUser===true&&!isCH&&!isPPAcase2&&!isBank2x;
   const isUserCity=isCH&&src.isUser===true;
-  title.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">${kindBadge}<span style="font-size:14px;font-weight:600">${src.name||src.customer||''}</span>${isUserCase?`<button onclick="deleteCase('${id}')" style="margin-left:auto;background:#fce8e8;color:#a32d2d;border:1px solid #f09595;border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">🗑 削除</button>`:isUserCity?`<button onclick="deleteCity('${id}')" style="margin-left:auto;background:#fce8e8;color:#a32d2d;border:1px solid #f09595;border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">🗑 削除</button>`:""}</div>`;
+  const isUserPPA=isPPAcase2&&src.isUser===true;
+  const isUserBank=isBank2x&&src.isUser===true;
+  const kindBadge=isCH
+    ?`<span class="badge ba">自治体</span>`
+    :isPPAcase2?`<span class="badge" style="background:#e0f2fe;color:#0ea5e9">PPA</span>`
+    :isBank2x?`<span class="badge bt">銀行</span>`
+    :`<span class="badge bp">${src.kind||"企業"}</span>`;
+  title.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">${kindBadge}<span style="font-size:14px;font-weight:600">${src.name||src.customer||''}</span><button onclick="${isCH?`deleteCity('${id}')`:isPPAcase2?`deletePPACase('${id}')`:`deleteCase('${id}')`}" style="margin-left:auto;background:#fce8e8;color:#a32d2d;border:1px solid #f09595;border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">🗑 削除</button></div>`;
   if(!isCH){
     const caseHeat=caseExtra[id]?.heat!==undefined?caseExtra[id].heat:(src.heat||0);
     title.innerHTML+=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px">
-      <select onchange="updateCaseStatus('${id}',this.value)" style="width:auto;font-size:12px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff">${["最終交渉中","見積作成中","提案中","シミュレーション済","初期商談","見積依頼中","資料提供","商談中","受注済","初期接触","見積提出","失注"].map(s=>`<option${s===src.status?" selected":""}>${s}</option>`).join("")}</select>
+      <select onchange="${isPPAcase2?`updatePPAStatus('${id}',this.value)`:isBank2x?`updateBankStatus('${id}',this.value)`:`updateCorpStatus('${id}',this.value)`}" style="width:auto;font-size:12px;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:#fff">${(isPPAcase2?PPA_STATUSES:isBank2x?BANK_STATUSES:CORP_STATUSES).map(s=>`<option${s===src.status?" selected":""}>${s}</option>`).join("")}</select>
       <div style="display:flex;align-items:center;gap:4px">
         <span style="font-size:11px;font-weight:600;color:var(--sub)">熱さ</span>
         <div style="display:flex;gap:2px">${Array.from({length:11},(_,i)=>`<button onclick="updateCaseHeat('${id}',${i})" style="width:22px;height:22px;border-radius:50%;border:1.5px solid ${i<=caseHeat?'#185fa5':'#ddd'};background:${i<=caseHeat?(i>=8?'#e24b4a':i>=5?'#ef9f27':'#185fa5'):'#f8f8f6'};color:${i<=caseHeat?'#fff':'#aaa'};font-size:10px;font-weight:600;cursor:pointer;padding:0">${i}</button>`).join('')}</div>
@@ -1029,7 +1111,7 @@ async function openActModal(id){
   const statusHist=[];
   if(!isCH){
     const histRef=await(db?db.ref("crm/status_history/"+id).once("value").then(s=>s.val()||{}).catch(()=>{}):Promise.resolve({}));
-    if(histRef){Object.values(histRef).sort((a,b)=>b.ts-a.ts).slice(0,5).forEach(h=>statusHist.push(h));}
+    if(histRef){Object.entries(histRef).sort((a,b)=>(b[1].ts||0)-(a[1].ts||0)).slice(0,10).forEach(([k,h])=>statusHist.push({...h,_key:k}));}
   }
   // Linked cases
   const linkedIds=(caseExtra[id]?.links||[]);
@@ -1050,15 +1132,9 @@ async function openActModal(id){
   // Status history HTML
   const histHtml=statusHist.length?`<div style="margin-bottom:12px">
     <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">ステータス変更履歴</div>
-    ${statusHist.map(h=>`<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:0.5px solid var(--border-light)">
-      <span style="color:var(--sub2);white-space:nowrap">${h.date}</span>
-      <span class="badge bgy">${h.from||'?'}</span>
-      <i class="ti ti-arrow-right" style="font-size:12px;color:var(--sub2)"></i>
-      <span class="badge ${SC[h.to]||'bgy'}">${h.to}</span>
-    </div>`).join('')}
-  </div>`:'';
-
-  // Linked cases HTML
+    ${statusHist.map(h=>'<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0;border-bottom:0.5px solid var(--border-light)"><span style="color:var(--sub2);white-space:nowrap;min-width:78px">'+(h.date||'')+'</span><span class="badge bgy">'+(h.from||'?')+'</span><i class="ti ti-arrow-right" style="font-size:12px;color:var(--sub2)"></i><span class="badge '+(SC[h.to]||'bgy')+'">'+(h.to||'')+'</span>'+(h._key?'<button onclick="deleteStatusHistory(\''+id+'\',\''+h._key+'\')" style="margin-left:auto;border:none;background:none;cursor:pointer;color:#ccc;font-size:13px;padding:2px" onmouseover="this.style.color=\'#dc2626\'" onmouseout="this.style.color=\'#ccc\'">❌</button>':'')+'</div>').join("")}
+  </div>`:"";
+    // Linked cases HTML
   const allForLink=[...getAllCases(),...getAllBankCases()].filter(p=>p.id!==id);
   const linkedHtml=`<div style="margin-bottom:12px">
     <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px;margin-bottom:6px">紐付け案件</div>
@@ -1085,76 +1161,70 @@ async function openActModal(id){
     </summary>
     <div style="padding-top:10px">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
-        <div><div class="flabel">案件名${isCH?'（自治体名）':''}</div>
-          <input id="edit-name" value="${src.name||''}" style="font-size:12px"></div>
-        ${isCH?`
-        <div><div class="flabel">熱さスコア</div>
-          <input id="edit-heat" type="number" min="0" max="10" value="${src.heat||0}" style="font-size:12px"></div>
-        `:`
-        <div><div class="flabel">顧客名</div>
-          <input id="edit-customer" value="${src.customer||''}" style="font-size:12px"></div>
-        `}
-        <div><div class="flabel">担当者</div>
-          <input id="edit-assignee" value="${src.assignee||''}" style="font-size:12px"></div>
-        <div><div class="flabel">ステータス</div>
-          <select id="edit-status" style="font-size:12px;padding:5px 8px">
-            ${["最終交渉中","見積作成中","提案中","シミュレーション済","初期商談","見積依頼中","資料提供","商談中","受注済","初期接触","見積提出","失注"].map(s=>`<option${s===(src.status||'')?'" selected':''}">${s}</option>`).join('')}
-          </select></div>
-        ${!isCH?`
-        <div><div class="flabel">想定収益（円）</div>
-          <input id="edit-revenue" type="number" value="${src.revenue||0}" style="font-size:12px"></div>
-        <div><div class="flabel">見積金額（円）</div>
-          <input id="edit-estimate" type="number" value="${src.estimate||0}" style="font-size:12px"></div>
-        <div><div class="flabel">受注金額（円）</div>
-          <input id="edit-order" type="number" value="${src.orderAmount||0}" style="font-size:12px"></div>
-        `:''}
-        <div style="${isCH?'grid-column:1/-1':''}"><div class="flabel">備考 / メモ</div>
-          <input id="edit-note" value="${src.note||''}" style="font-size:12px"></div>
+        <div><div class="flabel">${isCH?"自治体名":"案件名"}</div><input id="edit-name" value="${src.name||""}" style="font-size:12px"></div>
+        ${isCH?`<div><div class="flabel">熱さスコア (0〜10)</div><input id="edit-heat" type="number" min="0" max="10" value="${src.heat||0}" style="font-size:12px"></div>`
+          :`<div><div class="flabel">顧客名</div><input id="edit-customer" value="${src.customer||""}" style="font-size:12px"></div>`}
+        <div><div class="flabel">担当者</div><input id="edit-assignee" value="${src.assignee||""}" style="font-size:12px"></div>
+        <div><div class="flabel">ステータス</div><select id="edit-status" style="font-size:12px;padding:5px 8px">${(isPPAcase2?PPA_STATUSES:isBank2x?BANK_STATUSES:CORP_STATUSES).map(s=>`<option${s===(src.status||"")?" selected":""}>${s}</option>`).join("")}</select></div>
+        ${isPPAcase2?`
+        <div><div class="flabel">投資金額（円）</div><input id="edit-invest" type="number" value="${src.investAmount||0}" style="font-size:12px"></div>
+        <div><div class="flabel">年間売電収入（円）</div><input id="edit-annual" type="number" value="${src.annualRevenue||0}" style="font-size:12px"></div>
+        <div><div class="flabel">契約締結日</div><input id="edit-closedate" type="date" value="${src.closeDate||""}" style="font-size:12px"></div>
+        `:!isCH?`
+        <div><div class="flabel">見積金額（円）</div><input id="edit-estimate" type="number" value="${src.estimate||0}" style="font-size:12px"></div>
+        <div><div class="flabel">受注金額（円）</div><input id="edit-order" type="number" value="${src.orderAmount||0}" style="font-size:12px"></div>
+        <div><div class="flabel">受注日</div><input id="edit-closedate" type="date" value="${src.closeDate||""}" style="font-size:12px"></div>
+        `:""}
+        <div style="${isCH?"grid-column:1/-1":""}"><div class="flabel">備考 / メモ</div><input id="edit-note" value="${src.note||""}" style="font-size:12px"></div>
       </div>
-      <button class="btn btn-p btn-sm" onclick="saveEditBasic('${id}',${isCH},${isBank2})">
+      <button class="btn btn-p btn-sm" onclick="saveEditBasic('${id}',${isCH},${isBank2x})">
         <i class="ti ti-device-floppy" style="font-size:12px;vertical-align:-1px;margin-right:3px"></i>保存する
       </button>
+      <span style="font-size:10px;color:var(--sub2);margin-left:8px">※ 変更後は必ず「保存する」を押してください</span>
     </div>
   </details>`;
 
-  body.innerHTML=editHtml+(isCH?'':(histHtml+linkedHtml))+cityInfoHtml+tagSelectHtml+actPanel(id);
+  // Status flow
+  const ppaFlow=isPPAcase2&&!isCH?makeFlowHtml(PPA_STATUS_FLOW,PPA_STATUSES,"updatePPAStatus"):"";
+  const corpFlow=!isCH&&!isPPAcase2&&!isBank2x?makeFlowHtml(CORP_STATUS_FLOW,CORP_STATUSES,"updateCorpStatus"):"";
+  const bankFlow=!isCH&&!isPPAcase2&&isBank2x?makeFlowHtml(BANK_STATUS_FLOW,BANK_STATUSES,"updateBankStatus"):"";
+  const flowHtml=ppaFlow||corpFlow||bankFlow;
+  body.innerHTML=editHtml+(isCH?'':(flowHtml+histHtml+linkedHtml))+cityInfoHtml+tagSelectHtml+actPanel(id);
   modal.classList.add('open');
   document.body.style.overflow='hidden';
   }catch(e){console.error("openActModal error:",e);toast("表示エラー: "+e.message);}
 }
 async function saveEditBasic(id, isCH, isBank){
-  const src=[...getAllCases(),...getAllBankCases(),...getAllCities()].find(x=>x.id===id);
-  if(!src)return;
-  const name=document.getElementById('edit-name')?.value?.trim()||src.name;
-  const assignee=document.getElementById('edit-assignee')?.value?.trim()||src.assignee;
-  const note=document.getElementById('edit-note')?.value?.trim()||src.note||'';
-  const status=document.getElementById('edit-status')?.value||src.status;
-  if(!name){toast("名前は必須です");return;}
-  src.name=name; src.assignee=assignee; src.note=note; src.status=status;
+  try{
+  const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===id);
+  if(!src){toast("案件が見つかりません");return;}
+  const gv=(eid,fb)=>{const el=document.getElementById(eid);return el?el.value:fb;};
+  const gn=(eid,fb)=>{const el=document.getElementById(eid);if(!el||el.value==='')return fb;const v=parseFloat(el.value);return isNaN(v)?fb:v;};
+  src.name=(gv("edit-name",src.name)||src.name).trim();
+  src.assignee=(gv("edit-assignee",src.assignee)||"").trim();
+  src.note=(gv("edit-note",src.note)||"").trim();
+  src.status=gv("edit-status",src.status)||src.status;
+  if(!src.name){toast("名前は必須です");return;}
   if(isCH){
-    const heat=parseInt(document.getElementById('edit-heat')?.value||src.heat||0);
-    src.heat=Math.min(10,Math.max(0,heat));
-    // Save heat to city_extra too
-    if(!cityExtra[id])cityExtra[id]={};cityExtra[id].heat=src.heat;
-    await setDb("crm/city_extra/"+id,cityExtra[id]);
-    if(src.isUser)await setDb("crm/user_cities/"+id,src);
+    src.heat=Math.min(10,Math.max(0,gn("edit-heat",src.heat||0)));
   } else {
-    const customer=document.getElementById('edit-customer')?.value?.trim()||src.customer;
-    const revenue=parseFloat(document.getElementById('edit-revenue')?.value)||src.revenue||0;
-    const estimate=parseFloat(document.getElementById('edit-estimate')?.value)||0;
-    const orderAmount=parseFloat(document.getElementById('edit-order')?.value)||0;
-    src.customer=customer; src.revenue=revenue; src.estimate=estimate; src.orderAmount=orderAmount;
-    // Save status to caseExtra (works for both built-in and user cases)
-    if(!caseExtra[id])caseExtra[id]={};
-    caseExtra[id].status=status;
-    caseExtra[id].revenue=revenue;
-    caseExtra[id].estimate=estimate;
-    caseExtra[id].orderAmount=orderAmount;
-    // saveCase handles all Firebase writes atomically
+    src.customer=(gv("edit-customer",src.customer)||"").trim();
+    const isPPAedit=src.kind==="PPA"||(src.tags||[]).includes("PPA");
+    if(isPPAedit){
+      src.investAmount=gn("edit-invest",src.investAmount||0);
+      src.annualRevenue=gn("edit-annual",src.annualRevenue||0);
+    } else {
+      src.estimate=gn("edit-estimate",src.estimate||0);
+      src.orderAmount=gn("edit-order",src.orderAmount||0);
+    }
+    const cd=gv("edit-closedate","");
+    if(cd)src.closeDate=cd;
   }
-  toast("✓ 保存しました");
-  openActModal(id);render();
+  const ok=await saveCase(src);
+  if(ok){toast("✓ 保存しました");openActModal(id);render();}
+  }catch(e){console.error("saveEditBasic error:",e);toast("保存エラー: "+e.message);}
 }
+
 async function clearReminder(caseId, actId){
   const list=acts[caseId]||[];
   const a=list.find(x=>x.id===actId);if(!a)return;
@@ -1213,8 +1283,13 @@ async function saveNewCity(){
   toast("✓ 自治体を追加しました");render();
 }
 async function deleteCity(id){
-  if(!confirm("この自治体を削除しますか？活動履歴も削除されます。"))return;
-  await setDb("crm/user_cities/"+id, null);
+  if(!confirm("この自治体を削除しますか？"))return;
+  const src=[...CH,...userCities].find(x=>x.id===id);
+  if(src&&src.isUser){
+    await setDb("crm/user_cities/"+id, null);
+  } else {
+    await setDb("crm/deleted_ids/"+id, true);
+  }
   await setDb("crm/acts/"+id, null);
   closeActModal();toast("削除しました");render();
 }
@@ -1244,10 +1319,16 @@ async function saveNewCase(){
   toast("✓ 案件を追加しました");render();
 }
 async function deleteCase(id){
-  if(!confirm("この案件を削除しますか？活動履歴も削除されます。"))return;
-  const isBank=getAllBankCases().some(x=>x.id===id);
-  const path=isBank?"crm/user_bank_cases/":"crm/user_cases/";
-  if(db){try{await db.ref().update({[path+id]:null,["crm/acts/"+id]:null,["crm/case_extra/"+id]:null});}catch(e){toast("削除エラー:"+e.message);return;}}
+  if(!confirm("この案件を削除しますか？"))return;
+  const src=[...GXP,...CORP,...BANKP,...userCases,...userBankCases].find(x=>x.id===id);
+  if(src&&src.isUser){
+    const isBank=userBankCases.some(x=>x.id===id);
+    const path=isBank?"crm/user_bank_cases/":"crm/user_cases/";
+    if(db){try{await db.ref().update({[path+id]:null,["crm/acts/"+id]:null,["crm/case_extra/"+id]:null});}catch(e){toast("削除エラー:"+e.message);return;}}
+  } else {
+    await setDb("crm/deleted_ids/"+id, true);
+    await setDb("crm/acts/"+id, null);
+  }
   closeActModal();toast("削除しました");render();
 }
 function openNewCaseModal(){
@@ -1268,7 +1349,7 @@ function startEditAct(key,id){
   // re-render the modal body
   const bodyEl=document.getElementById('act-box-body');
   if(bodyEl){
-    const src=[...getAllCases(),...CH].find(x=>x.id===key);
+    const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===key);
     openActModal(key); // re-open to refresh
   }
 }
@@ -1318,27 +1399,18 @@ async function saveInlineAct(key,id,btn){
 function cancelEditAct(){editActKey=null;editActId=null;editActForm=null;const ok=document.getElementById('act-modal').dataset.key;if(ok)openActModal(ok);}
 
 function toggleTagModal(id,tag){
-  const isCH=CH.some(x=>x.id===id);
-  if(isCH){
-    const c=CH.find(x=>x.id===id);if(!c)return;
-    if(!c.tags)c.tags=[];
-    const idx=c.tags.indexOf(tag);
-    if(idx>=0)c.tags.splice(idx,1);else c.tags.push(tag);
-    if(!cityExtra[id])cityExtra[id]={};cityExtra[id].tags=c.tags;
-    setDb('crm/city_extra/'+id,cityExtra[id]);
-  } else {
-    const p=getAllCases().find(x=>x.id===id);if(!p)return;
-    if(!p.tags)p.tags=[];
-    const idx=p.tags.indexOf(tag);
-    if(idx>=0)p.tags.splice(idx,1);else p.tags.push(tag);
-    if(!caseExtra[id])caseExtra[id]={};caseExtra[id].tags=p.tags;
-    setDb('crm/case_extra/'+id,caseExtra[id]);
-  }
-  renderActModalTags(id);
+  const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===id);
+  OPEN_MODAL_SRC=src; OPEN_MODAL_ID=id;
+  if(!src)return;
+  if(!src.tags)src.tags=[];
+  const ti=src.tags.indexOf(tag);
+  if(ti>=0)src.tags.splice(ti,1);else src.tags.push(tag);
+  saveCase(src);
+  renderActModalTags(id);render();
 }
+
 function renderActModalTags(id){
-  // Re-render just the tag select area inside modal
-  const src=[...getAllCases(),...CH].find(x=>x.id===id);
+  const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===id);
   if(!src)return;
   const allTagsMerged=[...new Set(["太陽光","企業版ふるさと納税","MaaS","ハウス","アクア","EPC","PPA","営農型","フレキシブル","蓄電池","包括連携","復興","観光","B-nozzle","EV","大型","自治体",...(src.tags||[])].sort())];
   const curTags=src.tags||[];
@@ -1780,6 +1852,95 @@ function renderA(){
 }
 
 
+// ═══════════════════ PPA案件 ═══════════════════
+function renderPPA(){
+  const sts=["すべて",...new Set(getAllPPACases().map(p=>p.status)||["初期商談"])];
+  let fp=getAllPPACases().filter(p=>{
+    if(ppaQ&&!p.name.includes(ppaQ)&&!p.customer.includes(ppaQ)&&!(p.assignee||"").includes(ppaQ))return false;
+    if(ppaSt!=="すべて"&&p.status!==ppaSt)return false;
+    if(ppaAssignee!=="すべて"&&p.assignee!==ppaAssignee)return false;
+    return true;
+  });
+  fp.sort((a,b)=>(a.assignee||"").localeCompare(b.assignee||"","ja"));
+  function ct(p){return(p.annualRevenue||0)*(p.contractYears||15);}
+  const taggedCount=[...getAllCases(),...getAllBankCases()].filter(p=>(p.tags||[]).includes("PPA")).length;
+  const totalSites=fp.reduce((s,p)=>s+(p.sites||1),0);
+  const totalKw=fp.reduce((s,p)=>s+(p.capacityKw||0),0);
+  const totalContract=fp.reduce((s,p)=>s+ct(p),0);
+  const activeCount=fp.filter(p=>p.status==="運用中"||p.status==="契約締結").length;
+  const stageCounts={};PPA_STATUS_FLOW.forEach(s=>{stageCounts[s.key]=0;});
+  fp.forEach(p=>{if(stageCounts[p.status]!==undefined)stageCounts[p.status]++;});
+  const rows=fp.map(p=>{
+    const next=(acts[p.id]||[]).filter(a=>a.nextDate)[0];
+    const rc=next?remClass(next.nextDate):"";
+    const total=ct(p);
+    const origin=p.isUser&&p.kind==="PPA"?"PPA":p.kind||"企業";
+    const ob=origin==="PPA"?`<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#e0f2fe;color:#0ea5e9;font-weight:600">PPA</span>`:`<span class="badge bp" style="font-size:10px">${origin}</span>`;
+    return`<tr class="row ${rc}" onclick="openActModal('${p.id}')">
+      <td><div style="display:flex;align-items:center;gap:5px">${ob}<span style="font-weight:500;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.name}</span></div></td>
+      <td style="color:var(--sub);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.customer}</td>
+      <td>${p.assignee||"−"}</td>
+      <td>${(()=>{const sf=PPA_STATUS_FLOW.find(x=>x.key===p.status);return sf?`<span style="display:inline-flex;align-items:center;gap:3px;background:${sf.color}18;color:${sf.color};border:1px solid ${sf.color}40;border-radius:6px;font-size:11px;font-weight:600;padding:2px 8px;white-space:nowrap"><i class="ti ${sf.icon}" style="font-size:11px"></i>${sf.label}</span>`:`<span class="badge bgy">${p.status}</span>`;})()}</td>
+      <td style="text-align:center">${p.sites||1}</td>
+      <td style="text-align:right">${(p.capacityKw||0)>0?p.capacityKw+"kW":"−"}</td>
+      <td style="text-align:right;font-size:11px;color:var(--sub2)">${(p.annualRevenue||0)>0?yen(p.annualRevenue)+"/年":"−"}</td>
+      <td style="text-align:right;font-weight:600;color:${total>0?"var(--green)":"var(--sub2)"}">${total>0?yen(total):"−"}</td>
+      <td style="text-align:center">${actCount(p.id)>0?`<span class="badge bb">${actCount(p.id)}</span>`:"−"}</td>
+    </tr>`;
+  }).join("");
+  return`
+  ${taggedCount>0?`<div style="background:#e0f2fe;border:1px solid #bae6fd;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#0369a1;display:flex;align-items:center;gap:8px">
+    <i class="ti ti-tag" style="font-size:14px"></i>PPAタグ付き案件 <strong>${taggedCount}件</strong> を含めて表示
+  </div>`:""}
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+    <div class="metric" style="border-left:3px solid #0ea5e9"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">PPA案件数</div><div style="font-size:22px;font-weight:700">${fp.length}</div><div style="font-size:10px;color:var(--sub2)">稼働中 ${activeCount}件</div></div>
+    <div class="metric" style="border-left:3px solid var(--green)"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">契約総額</div><div style="font-size:18px;font-weight:700;color:var(--green)">${yen(totalContract)}</div></div>
+    <div class="metric" style="border-left:3px solid var(--blue)"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">総サイト数</div><div style="font-size:22px;font-weight:700">${totalSites}</div></div>
+    <div class="metric" style="border-left:3px solid var(--amber)"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">設置容量</div><div style="font-size:22px;font-weight:700">${totalKw>0?totalKw+"kW":"−"}</div></div>
+  </div>
+  <div style="margin-bottom:12px">
+    <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:6px;text-transform:uppercase;letter-spacing:.3px">ステージ別パイプライン</div>
+    <div style="display:flex;align-items:stretch;overflow-x:auto;border-radius:8px;overflow:hidden;border:1px solid var(--border)">
+      ${(()=>{const active=PPA_STATUS_FLOW.filter(s=>stageCounts[s.key]>0);
+        if(!active.length)return'<div style="flex:1;padding:12px;text-align:center;color:var(--sub2);font-size:12px;background:var(--bg)">案件を追加するとステージが表示されます</div>';
+        return active.map((s,i)=>'<div style="flex:'+stageCounts[s.key]+';min-width:60px;background:'+s.color+';padding:8px 6px;text-align:center'+(i<active.length-1?';border-right:1px solid rgba(255,255,255,.25)':'')+'" title="'+s.desc+'"><div style="font-size:14px;font-weight:700;color:#fff">'+stageCounts[s.key]+'</div><div style="font-size:10px;color:rgba(255,255,255,.85);margin-top:2px;white-space:nowrap">'+s.label+'</div></div>').join('');
+      })()}
+    </div>
+  </div>
+  <div class="sb">
+    <div class="sw-w"><i class="si ti ti-search"></i><input placeholder="案件名・顧客名…" value="${ppaQ}" oninput="ppaQ=this.value;render()"></div>
+    <select onchange="ppaSt=this.value;render()">${sts.map(s=>`<option${s===ppaSt?" selected":""}>${s}</option>`).join("")}</select>
+    <select onchange="ppaAssignee=this.value;render()" title="担当者"><option value="すべて">担当者：すべて</option>${getAllAssignees().map(a=>`<option${a===ppaAssignee?" selected":""}>${a}</option>`).join("")}</select>
+    <button class="btn btn-p" onclick="openNewPPAModal()" style="white-space:nowrap;padding:7px 14px"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>新規PPA</button>
+  </div>
+  ${fp.length===0?`<div style="padding:40px;text-align:center;color:var(--sub2)"><i class="ti ti-solar-panel" style="font-size:36px;display:block;margin:0 auto 10px;opacity:.3"></i><div style="font-size:14px;font-weight:500;margin-bottom:6px">PPA案件がありません</div></div>`:`<div class="scr"><table>
+    <thead><tr><th>案件名</th><th>顧客名</th><th>担当</th><th>ステータス</th><th style="text-align:center">サイト数</th><th style="text-align:right">容量</th><th style="text-align:right">年間収入</th><th style="text-align:right">契約総額</th><th style="text-align:center">活動</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`}`;
+}
+
+// ═══ PPA案件 CRUD ═══
+async function saveNewPPACase(){
+  const f=newPPAForm;
+  if(!f.name.trim()||!f.customer.trim()){toast("案件名と顧客名は必須です");return;}
+  const id="ppa"+Date.now().toString(36);
+  const p={id,kind:"PPA",name:f.name.trim(),customer:f.customer.trim(),assignee:f.assignee.trim(),status:f.status,
+    contractYears:Number(f.contractYears)||15,capacityKw:Number(f.capacityKw)||0,annualRevenue:Number(f.annualRevenue)||0,
+    irr:Number(f.irr)||0,sites:Number(f.sites)||1,unitPrice:Number(f.unitPrice)||0,investAmount:Number(f.investAmount)||0,
+    note:f.note.trim(),tags:[...f.tags],isUser:true};
+  await setDb("crm/user_ppa_cases/"+id, p);
+  newPPAForm={name:"",customer:"",assignee:"",status:"初期商談",contractYears:15,capacityKw:0,annualRevenue:0,irr:0,sites:1,unitPrice:0,investAmount:0,note:"",tags:[]};
+  document.getElementById("new-ppa-modal").style.display="none";document.body.style.overflow="";
+  toast("✓ PPA案件を追加しました");render();
+}
+async function deletePPACase(id){
+  if(!confirm("このPPA案件を削除しますか？"))return;
+  await setDb("crm/user_ppa_cases/"+id, null);await setDb("crm/acts/"+id, null);
+  closeActModal();toast("削除しました");render();
+}
+function openNewPPAModal(){document.getElementById("new-ppa-modal").style.display="flex";document.body.style.overflow="hidden";}
+function closeNewPPAModal(){document.getElementById("new-ppa-modal").style.display="none";document.body.style.overflow="";}
+
 // ═══════════════════ CSV出力 ═══════════════════
 function downloadCSV(filename, rows, headers){
   const escape=v=>{
@@ -1953,7 +2114,7 @@ function gsNavigate(id, tab){
   document.getElementById('gs-dd').style.display='none';
   // Switch tab
   curTab=tab;
-  const ids=["d","c","b","m","a"];
+  const ids=["d","c","b","m","ppa","a"];
   document.querySelectorAll(".tb").forEach((b,i)=>b.classList.toggle("on",ids[i]===tab));
   render();
   // Open modal and scroll + highlight
@@ -1997,6 +2158,7 @@ function render(){
   else if(curTab==="c") body=renderC();
   else if(curTab==="b") body=renderB();
   else if(curTab==="m") body=renderM();
+  else if(curTab==="ppa") body=renderPPA();
   else body=renderA();
   document.getElementById("content").innerHTML=body;
 }
