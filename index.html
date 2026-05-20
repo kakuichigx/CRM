@@ -368,6 +368,30 @@ tr.sel td{background:var(--blue-light)}
   </div>
 </div>
 
+<!-- ASSIGNEE MANAGER MODAL -->
+<div id="assignee-modal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.6);backdrop-filter:blur(4px);z-index:700;align-items:center;justify-content:center;padding:12px" onclick="if(event.target===this)closeAssigneeManager()">
+  <div style="background:#fff;border-radius:var(--radius-xl);width:100%;max-width:420px;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg)">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:#fff;z-index:1">
+      <div style="width:28px;height:28px;border-radius:8px;background:var(--blue-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <i class="ti ti-users" style="font-size:15px;color:var(--blue)"></i>
+      </div>
+      <div style="flex:1;font-size:15px;font-weight:600">営業担当者を管理</div>
+      <button onclick="closeAssigneeManager()" style="border:none;background:none;cursor:pointer;font-size:18px;color:var(--sub);padding:2px">✕</button>
+    </div>
+    <div style="padding:16px 18px">
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <input id="new-assignee-input" placeholder="担当者名を入力（例：田中）" style="flex:1;font-size:13px" onkeydown="if(event.key==='Enter')addAssignee()">
+        <button class="btn btn-p" onclick="addAssignee()" style="white-space:nowrap;padding:7px 14px">
+          <i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>追加
+        </button>
+      </div>
+      <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">担当者一覧</div>
+      <div id="assignee-list"></div>
+      <div style="margin-top:12px;font-size:11px;color:var(--sub2);line-height:1.6">「使用中」の担当者は案件に紐付いているため削除できません。</div>
+    </div>
+  </div>
+</div>
+
 <!-- ACTIVITY POPUP MODAL -->
 <div id="act-modal" onclick="if(event.target===this)closeActModal()">
   <div id="act-box">
@@ -516,7 +540,7 @@ function getFiscalPeriod(ki){
 function getCurrentKi(){return getFiscalKi(today());}
 function isInKi(dateStr,ki){return getFiscalKi(dateStr)===ki;}
 let dashKi=getCurrentKi();
-let annualGoalOrder=0,annualGoalPPA=0;
+let annualGoalOrder=15000000000,annualGoalPPA=0; // 受注+PPA合計目標150億
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400);}
 function actCount(k){return(acts[k]||[]).length;}
 function daysDiff(s){if(!s)return null;const d=new Date(s),n=new Date();n.setHours(0,0,0,0);return Math.floor((d-n)/86400000);}
@@ -530,8 +554,55 @@ let form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]
 let newCaseForm={kind:"企業",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
 let tagInput="", dragId=null, editActKey=null, editActId=null;
 function getAllCases(){return[...GXP,...CORP,...userCases];}
-function getAllAssignees(){const s=JSON.parse(localStorage.getItem('crm_assignees')||'[]');const f=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];return[...new Set([...s,...f])].sort((a,b)=>a.localeCompare(b,'ja'));}
+function getAllAssignees(){
+  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
+  return[...new Set([...stored,...fromCases])].sort((a,b)=>a.localeCompare(b,'ja'));
+}
 function saveAssignees(list){localStorage.setItem('crm_assignees',JSON.stringify(list));}
+function openAssigneeManager(){
+  document.getElementById('assignee-modal').style.display='flex';
+  document.body.style.overflow='hidden';
+  renderAssigneeList();
+}
+function closeAssigneeManager(){
+  document.getElementById('assignee-modal').style.display='none';
+  document.body.style.overflow='';
+  render();
+}
+function renderAssigneeList(){
+  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
+  const all=[...new Set([...stored,...fromCases])].sort((a,b)=>a.localeCompare(b,'ja'));
+  const el=document.getElementById('assignee-list');
+  if(!el)return;
+  el.innerHTML=all.map(a=>{
+    const inUse=fromCases.includes(a);
+    const isStored=stored.includes(a);
+    return`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:0.5px solid var(--border-light)">
+      <div style="width:32px;height:32px;border-radius:50%;background:var(--blue-light);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:var(--blue);flex-shrink:0">${a.slice(0,1)}</div>
+      <span style="flex:1;font-size:14px;font-weight:500">${a}</span>
+      ${inUse?'<span class="badge bb" style="font-size:10px">使用中</span>':''}
+      ${isStored&&!inUse?`<button class="btn btn-sm btn-d" onclick="removeAssignee('${a.replace(/'/g,"\'")}')">削除</button>`:''}
+    </div>`;
+  }).join('')||'<div style="padding:20px;text-align:center;color:var(--sub2);font-size:13px">担当者がいません</div>';
+}
+function addAssignee(){
+  const input=document.getElementById('new-assignee-input');
+  const name=input?.value?.trim();
+  if(!name){toast("名前を入力してください");return;}
+  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  if(!stored.includes(name)){stored.push(name);saveAssignees(stored);}
+  input.value='';
+  toast("✓ 「"+name+"」を追加しました");
+  renderAssigneeList();render();
+}
+function removeAssignee(name){
+  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  saveAssignees(stored.filter(a=>a!==name));
+  toast("削除しました");
+  renderAssigneeList();render();
+}
 
 // ── UI State ──
 let curTab="d", caseSel=null, citySel=null;
@@ -1322,23 +1393,36 @@ function renderD(){
     <span style="font-size:11px;color:var(--sub2)">${fp.range}</span>
     ${dashKi!==getCurrentKi()?`<button onclick="dashKi=getCurrentKi();render()" style="font-size:11px;padding:3px 10px;border:1px solid var(--blue);color:var(--blue);background:none;border-radius:6px;cursor:pointer">今期に戻る</button>`:""}
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-      <span style="font-size:11px;color:var(--sub2)">目標:</span>
-      <input type="number" placeholder="受注目標(億)" value="${annualGoalOrder?annualGoalOrder/1e8:''}" oninput="annualGoalOrder=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
-      <input type="number" placeholder="PPA目標(億)" value="${annualGoalPPA?annualGoalPPA/1e8:''}" oninput="annualGoalPPA=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+      <span style="font-size:11px;color:var(--sub2)">年間目標:</span>
+      <input type="number" placeholder="合計目標(億)" value="${annualGoalOrder/1e8}" oninput="annualGoalOrder=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+      <span style="font-size:11px;color:var(--sub2)">億円</span>
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:18px">
-    <div class="metric" style="border-left:3px solid var(--blue);cursor:pointer" onclick="showBd('cases')">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--blue-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-file-text" style="font-size:14px;color:var(--blue)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">案件数 ›</span></div>
-      <div style="font-size:26px;font-weight:700">${getAllCases().length}</div>
-      <div style="font-size:11px;color:var(--sub2)">銀行 ${getAllBankCases().length}</div>
-    </div>
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:18px;overflow-x:auto">
     <div class="metric" style="border-left:3px solid var(--green);cursor:pointer" onclick="showBd('revenue')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-trophy" style="font-size:14px;color:var(--green)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">受注金額 ›</span></div>
       <div style="font-size:22px;font-weight:700;color:var(--green)">¥${(wonRev/1e8).toFixed(2)}億</div>
       <div style="font-size:10px;color:var(--sub2)">受注済 ${wonCnt}件</div>
-      ${annualGoalOrder>0?`<div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${Math.min(wonRev/annualGoalOrder*100,100).toFixed(0)}%;height:100%;background:var(--green);border-radius:4px"></div></div><div style="font-size:10px;color:var(--sub2);margin-top:2px">目標${(annualGoalOrder/1e8).toFixed(1)}億 ${Math.min(wonRev/annualGoalOrder*100,100).toFixed(0)}%</div>`:""}
+
+    </div>
+    <div class="metric" style="border-left:3px solid #0ea5e9;cursor:pointer" onclick="showBd('ppaInvest')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:#e0f2fe;display:flex;align-items:center;justify-content:center"><i class="ti ti-coin" style="font-size:14px;color:#0ea5e9"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">PPA投資 ›</span></div>
+      <div style="font-size:20px;font-weight:700;color:#0ea5e9">${ppaInvest>0?yen(ppaInvest):"−"}</div>
+      <div style="font-size:10px;color:var(--sub2)">${ppaKi.filter(p=>p.investAmount>0).length}件</div>
+
+    </div>
+    <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('mitsumori')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--amber-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-receipt" style="font-size:14px;color:var(--amber)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">見積件数 ›</span></div>
+      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/40</span></div>
+      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
+      <div style="font-size:10px;color:var(--sub2);margin-top:2px">${psStr}〜${peStr}締め</div>
+    </div>
+  
+    <div class="metric" style="border-left:3px solid var(--blue);cursor:pointer" onclick="showBd('cases')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--blue-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-file-text" style="font-size:14px;color:var(--blue)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">案件数 ›</span></div>
+      <div style="font-size:26px;font-weight:700">${getAllCases().length}</div>
+      <div style="font-size:11px;color:var(--sub2)">銀行 ${getAllBankCases().length}</div>
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('cities')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--amber-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-building-community" style="font-size:14px;color:var(--amber)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">地方創生 ›</span></div>
@@ -1350,20 +1434,54 @@ function renderD(){
       <div style="font-size:26px;font-weight:700">${actTotal}</div>
       <div style="font-size:11px;color:var(--sub2)">累計</div>
     </div>
-    <div class="metric" style="border-left:3px solid #0ea5e9;cursor:pointer" onclick="showBd('ppaInvest')">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:#e0f2fe;display:flex;align-items:center;justify-content:center"><i class="ti ti-coin" style="font-size:14px;color:#0ea5e9"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">PPA投資 ›</span></div>
-      <div style="font-size:20px;font-weight:700;color:#0ea5e9">${ppaInvest>0?yen(ppaInvest):"−"}</div>
-      <div style="font-size:10px;color:var(--sub2)">${ppaKi.filter(p=>p.investAmount>0).length}件</div>
-      ${annualGoalPPA>0?`<div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${Math.min(ppaInvest/annualGoalPPA*100,100).toFixed(0)}%;height:100%;background:#0ea5e9;border-radius:4px"></div></div><div style="font-size:10px;color:var(--sub2);margin-top:2px">目標${(annualGoalPPA/1e8).toFixed(1)}億 ${Math.min(ppaInvest/annualGoalPPA*100,100).toFixed(0)}%</div>`:""}
-    </div>
-    <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('mitsumori')">
-      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--amber-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-receipt" style="font-size:14px;color:var(--amber)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">見積件数 ›</span></div>
-      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/40</span></div>
-      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
-      <div style="font-size:10px;color:var(--sub2);margin-top:2px">${psStr}〜${peStr}締め</div>
-    </div>
   </div>
 
+  ${(()=>{
+    const totalGoal=annualGoalOrder;
+    const combined=wonRev+ppaInvest;
+    if(totalGoal<=0)return'';
+    const pct=Math.min(combined/totalGoal*100,100);
+    const remaining=Math.max(totalGoal-combined,0);
+    const barColor=pct>=100?'var(--green)':pct>=70?'#0ea5e9':pct>=40?'var(--amber)':'var(--blue)';
+    // Segment widths
+    const wonPct=Math.min(wonRev/totalGoal*100,100);
+    const ppaPct=Math.min(ppaInvest/totalGoal*100,pct-wonPct);
+    return`<div style="background:#fff;border:1.5px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:18px;box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">年間目標 達成状況 ${getFiscalPeriod(dashKi).label}</div>
+          <div style="display:flex;align-items:baseline;gap:8px">
+            <span style="font-size:32px;font-weight:800;color:${barColor};letter-spacing:-2px">${pct.toFixed(1)}%</span>
+            <span style="font-size:15px;font-weight:700;color:var(--text)">${yen(combined)}</span>
+            <span style="font-size:13px;color:var(--sub2)">/ ${yen(totalGoal)}</span>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:var(--sub2);margin-bottom:2px">残り</div>
+          <div style="font-size:20px;font-weight:700;color:${remaining>0?'var(--sub)':'var(--green)'}">${remaining>0?yen(remaining):'達成！🎉'}</div>
+        </div>
+      </div>
+      <div style="background:var(--border-light);border-radius:8px;height:24px;overflow:hidden;position:relative;margin-bottom:10px">
+        <div style="position:absolute;left:0;top:0;height:100%;width:${wonPct}%;background:var(--green);border-radius:${ppaPct>0?'8px 0 0 8px':'8px'};transition:width .6s cubic-bezier(.4,0,.2,1)"></div>
+        <div style="position:absolute;left:${wonPct}%;top:0;height:100%;width:${ppaPct}%;background:#0ea5e9;border-radius:${wonPct>0?'0 8px 8px 0':'8px'};transition:width .6s .1s cubic-bezier(.4,0,.2,1)"></div>
+        ${pct>5?`<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:11px;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,.3)">${pct.toFixed(1)}%</div>`:''}
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:12px;height:12px;border-radius:3px;background:var(--green)"></div>
+          <span style="font-size:12px;color:var(--sub2)">受注金額</span>
+          <span style="font-size:12px;font-weight:600;color:var(--green)">${yen(wonRev)}</span>
+          <span style="font-size:11px;color:var(--sub2)">(${(wonRev/totalGoal*100).toFixed(1)}%)</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="width:12px;height:12px;border-radius:3px;background:#0ea5e9"></div>
+          <span style="font-size:12px;color:var(--sub2)">PPA投資</span>
+          <span style="font-size:12px;font-weight:600;color:#0ea5e9">${yen(ppaInvest)}</span>
+          <span style="font-size:11px;color:var(--sub2)">(${(ppaInvest/totalGoal*100).toFixed(1)}%)</span>
+        </div>
+      </div>
+    </div>`;
+  })()}
   ${upcoming.length?`<div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">リマインダー（7日以内）</div>
   <div style="margin-bottom:16px">${upcoming.map(r=>`<div class="${r.diff<0?"rem-over":r.diff<=3?"rem-soon":"rem-ok"}" style="padding:9px 14px;border-radius:var(--radius);margin-bottom:5px;display:flex;align-items:center;gap:8px;font-size:12px">
     <i class="ti ti-calendar" style="font-size:14px;flex-shrink:0"></i>
@@ -1458,6 +1576,7 @@ function renderC(){
     <select onchange="caseAssignee=this.value;render()">${assignees_c.map(a=>`<option${a===caseAssignee?" selected":""}>${a}</option>`).join("")}</select>
     <select onchange="caseTag=this.value;render()"><option value="">タグ絞込</option>${allT.map(t=>`<option${t===caseTag?" selected":""}>${t}</option>`).join("")}</select>
     <button class="btn btn-p" onclick="openNewCaseModal()" style="white-space:nowrap;padding:7px 14px"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>新規案件</button>
+    <button class="btn" onclick="openAssigneeManager()" style="padding:7px 12px" title="担当者を管理"><i class="ti ti-users" style="font-size:14px"></i></button>
     <button class="btn" onclick="exportCases()" style="white-space:nowrap;padding:7px 12px" title="CSVダウンロード"><i class="ti ti-download" style="font-size:14px"></i></button>
   </div>
   <div class="scr"><table>
@@ -1496,6 +1615,7 @@ function renderM(){
     <select onchange="cityH=this.value;render()">${hs.map(h=>`<option${h===cityH?" selected":""}>${h}</option>`).join("")}</select>
     <select onchange="cityAssignee=this.value;render()">${assignees_m.map(a=>`<option${a===cityAssignee?" selected":""}>${a}</option>`).join("")}</select>
     <button class="btn btn-p" onclick="openNewCityModal()" style="white-space:nowrap;padding:7px 14px"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>新規自治体</button>
+    <button class="btn" onclick="openAssigneeManager()" style="padding:7px 12px" title="担当者を管理"><i class="ti ti-users" style="font-size:14px"></i></button>
     <button class="btn" onclick="exportCities()" style="white-space:nowrap;padding:7px 12px" title="CSVダウンロード"><i class="ti ti-download" style="font-size:14px"></i></button>
   </div>
   <div class="scr"><table>
@@ -1542,6 +1662,7 @@ function renderB(){
     <button class="btn btn-p" onclick="openNewBankCaseModal()" style="white-space:nowrap;padding:7px 14px">
       <i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:3px"></i>新規銀行案件
     </button>
+    <button class="btn" onclick="openAssigneeManager()" style="padding:7px 12px" title="担当者を管理"><i class="ti ti-users" style="font-size:14px"></i></button>
     <button class="btn" onclick="exportBankCases()" style="white-space:nowrap;padding:7px 12px" title="CSVダウンロード"><i class="ti ti-download" style="font-size:14px"></i></button>
   </div>
   ${fp.length===0?`<div style="padding:40px;text-align:center;color:var(--sub2)">
