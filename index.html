@@ -663,9 +663,13 @@ function setSyncStatus(ok, label){
 }
 
 function startListeners(){
+  db.ref("crm/attachments").on("value",snap=>{
+    attachments=snap.val()||{};
+    render();
+  });
   db.ref("crm/acts").on("value",snap=>{
     acts=snap.val()||{};
-    getAllCases().forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;if(caseExtra[p.id]?.heat!==undefined)p.heat=caseExtra[p.id].heat;});
+    getAllCases().forEach(p=>{const ce=caseExtra[p.id]||{};if(ce.status)p.status=ce.status;if(ce.tags)p.tags=ce.tags;if(ce.heat!==undefined)p.heat=ce.heat;if(ce.orderAmount!==undefined)p.orderAmount=ce.orderAmount;if(ce.estimate!==undefined)p.estimate=ce.estimate;if(ce.closeDate)p.closeDate=ce.closeDate;});
     setSyncStatus(true,"同期済 ✓");
     render();
   });
@@ -683,21 +687,13 @@ function startListeners(){
       if(caseExtra[p.id]?.revenue!==undefined)p.revenue=caseExtra[p.id].revenue;
       if(caseExtra[p.id]?.estimate!==undefined)p.estimate=caseExtra[p.id].estimate;
       if(caseExtra[p.id]?.orderAmount!==undefined)p.orderAmount=caseExtra[p.id].orderAmount;
+      if(caseExtra[p.id]?.closeDate)p.closeDate=caseExtra[p.id].closeDate;
     });
-    getAllBankCases().forEach(p=>{
-      if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;
-      if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;
-    });
+    getAllBankCases().forEach(p=>{const ce=caseExtra[p.id]||{};if(ce.status)p.status=ce.status;if(ce.tags)p.tags=ce.tags;if(ce.orderAmount!==undefined)p.orderAmount=ce.orderAmount;if(ce.estimate!==undefined)p.estimate=ce.estimate;if(ce.closeDate)p.closeDate=ce.closeDate;});
     userPPACases.forEach(p=>{const ce=caseExtra[p.id]||{};
       ["status","tags","investAmount","annualRevenue","contractYears","capacityKw","unitPrice","sites","irr","closeDate"].forEach(f=>{if(ce[f]!==undefined)p[f]=ce[f];});
     });
-    getAllBankCases().forEach(p=>{
-      if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;
-      if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;
-      if(caseExtra[p.id]?.revenue!==undefined)p.revenue=caseExtra[p.id].revenue;
-      if(caseExtra[p.id]?.estimate!==undefined)p.estimate=caseExtra[p.id].estimate;
-      if(caseExtra[p.id]?.orderAmount!==undefined)p.orderAmount=caseExtra[p.id].orderAmount;
-    });
+    getAllBankCases().forEach(p=>{const ce=caseExtra[p.id]||{};if(ce.status)p.status=ce.status;if(ce.tags)p.tags=ce.tags;if(ce.orderAmount!==undefined)p.orderAmount=ce.orderAmount;if(ce.estimate!==undefined)p.estimate=ce.estimate;if(ce.closeDate)p.closeDate=ce.closeDate;});
     render();
   });
   db.ref("crm/city_extra").on("value",snap=>{
@@ -1189,7 +1185,8 @@ async function openActModal(id){
   const corpFlow=!isCH&&!isPPAcase2&&!isBank2x?makeFlowHtml(CORP_STATUS_FLOW,CORP_STATUSES,"updateCorpStatus"):"";
   const bankFlow=!isCH&&!isPPAcase2&&isBank2x?makeFlowHtml(BANK_STATUS_FLOW,BANK_STATUSES,"updateBankStatus"):"";
   const flowHtml=ppaFlow||corpFlow||bankFlow;
-  body.innerHTML=editHtml+(isCH?'':(flowHtml+histHtml+linkedHtml))+cityInfoHtml+tagSelectHtml+actPanel(id);
+  const attachHtml=buildAttachHtml(id);
+  body.innerHTML=editHtml+(isCH?'':(flowHtml+histHtml+linkedHtml))+cityInfoHtml+attachHtml+tagSelectHtml+actPanel(id);
   modal.classList.add('open');
   document.body.style.overflow='hidden';
   }catch(e){console.error("openActModal error:",e);toast("表示エラー: "+e.message);}
@@ -1232,6 +1229,80 @@ async function clearReminder(caseId, actId){
   const ok=await setDb("crm/acts/"+caseId, list);
   if(ok){toast("✓ 完了しました");render();
     if(document.getElementById('act-modal').dataset.key===caseId)openActModal(caseId);}
+}
+async function addAttachment(caseId){
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv';
+  input.onchange=async(e)=>{
+    const file=e.target.files[0];
+    if(!file)return;
+    if(file.size>5*1024*1024){toast("⚠ 5MB以下のファイルのみ添付できます");return;}
+    toast("📎 アップロード中...");
+    const reader=new FileReader();
+    reader.onload=async(ev)=>{
+      const data=ev.target.result;
+      const id="f"+Date.now().toString(36);
+      const now=new Date();
+      const meta={id,name:file.name,type:file.type,size:file.size,
+        date:now.toISOString().slice(0,10),
+        time:String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0'),
+        data};
+      const ok=await setDb("crm/attachments/"+caseId+"/"+id, meta);
+      if(ok){toast("✓ 添付しました: "+file.name);openActModal(caseId);}
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+async function deleteAttachment(caseId, fileId){
+  if(!confirm("この添付ファイルを削除しますか？"))return;
+  await setDb("crm/attachments/"+caseId+"/"+fileId, null);
+  toast("削除しました");openActModal(caseId);
+}
+function downloadAttachment(caseId, fileId){
+  const f=(attachments[caseId]||{})[fileId];
+  if(!f||!f.data)return;
+  const a=document.createElement('a');
+  a.href=f.data;a.download=f.name;a.click();
+}
+function formatFileSize(bytes){
+  if(bytes<1024)return bytes+'B';
+  if(bytes<1024*1024)return(bytes/1024).toFixed(1)+'KB';
+  return(bytes/1024/1024).toFixed(1)+'MB';
+}
+function buildAttachHtml(caseId){
+  const files=Object.values(attachments[caseId]||{}).sort((a,b)=>b.date>a.date?1:-1);
+  const iconMap={'application/pdf':'ti-file-type-pdf','image/':'ti-photo','application/vnd.openxmlformats':'ti-file-spreadsheet'};
+  function getIcon(type){
+    if(type.startsWith('image/'))return'ti-photo';
+    if(type.includes('pdf'))return'ti-file-type-pdf';
+    if(type.includes('spreadsheet')||type.includes('excel')||type.includes('csv'))return'ti-file-spreadsheet';
+    if(type.includes('word')||type.includes('document'))return'ti-file-type-doc';
+    if(type.includes('presentation')||type.includes('powerpoint'))return'ti-file-type-ppt';
+    return'ti-file';
+  }
+  return'<div style="margin-bottom:12px">'+
+    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+    '<div style="font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px">添付ファイル</div>'+
+    '<button onclick="addAttachment(\''+caseId+'\')" style="font-size:11px;padding:3px 10px;background:var(--blue);color:#fff;border:none;border-radius:5px;cursor:pointer;display:flex;align-items:center;gap:4px"><i class="ti ti-paperclip" style="font-size:12px"></i>ファイルを添付</button>'+
+    '<span style="font-size:10px;color:var(--sub2)">5MB以下</span>'+
+    '</div>'+
+    (files.length?files.map(f=>{
+      const isImg=f.type&&f.type.startsWith('image/');
+      return'<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:4px;border:0.5px solid var(--border-light)">'+
+        '<div style="width:32px;height:32px;border-radius:6px;background:var(--blue-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">'+
+        '<i class="ti '+getIcon(f.type||'')+'" style="font-size:15px;color:var(--blue)"></i></div>'+
+        '<div style="flex:1;min-width:0">'+
+        '<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+f.name+'</div>'+
+        '<div style="font-size:10px;color:var(--sub2)">'+f.date+' '+f.time+'　'+formatFileSize(f.size||0)+'</div>'+
+        '</div>'+
+        (isImg?'<button onclick="window.open(\''+f.data.replace(/'/g,"\\'")+'\',\'_blank\')" style="border:none;background:none;cursor:pointer;color:var(--blue);font-size:12px;padding:2px 6px" title="プレビュー"><i class="ti ti-eye"></i></button>':'')+
+        '<button onclick="downloadAttachment(\''+caseId+'\',\''+f.id+'\')" style="border:none;background:none;cursor:pointer;color:var(--blue);font-size:12px;padding:2px 6px" title="ダウンロード"><i class="ti ti-download"></i></button>'+
+        '<button onclick="deleteAttachment(\''+caseId+'\',\''+f.id+'\')" style="border:none;background:none;cursor:pointer;color:#ccc;font-size:12px;padding:2px 6px" title="削除" onmouseover="this.style.color=\'#dc2626\'" onmouseout="this.style.color=\'#ccc\'">❌</button>'+
+        '</div>';
+    }).join(''):'<div style="font-size:12px;color:var(--sub2);padding:8px 0">添付ファイルなし</div>')+
+    '</div>';
 }
 function closeActModal(){
   document.getElementById('act-modal').classList.remove('open');
