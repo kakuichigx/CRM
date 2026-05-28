@@ -352,7 +352,7 @@ tr.sel td{background:var(--blue-light)}
         <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">担当者</div>
           <input placeholder="例：田中" oninput="newCaseForm.assignee=this.value" style="font-size:13px">
         </div>
-        <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">想定収益（円）</div>
+        
           <input type="number" placeholder="例：5000000" oninput="newCaseForm.revenue=this.value" style="font-size:13px">
         </div>
         <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">太陽光容量（kW）</div>
@@ -389,6 +389,35 @@ tr.sel td{background:var(--blue-light)}
       <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">担当者一覧</div>
       <div id="assignee-list"></div>
       <div style="margin-top:12px;font-size:11px;color:var(--sub2);line-height:1.6">「使用中」の担当者は案件に紐付いているため削除できません。</div>
+    </div>
+  </div>
+</div>
+
+<div id="new-ppa-modal" style="display:none;position:fixed;inset:0;background:rgba(17,24,39,.6);backdrop-filter:blur(4px);z-index:700;align-items:center;justify-content:center;padding:12px" onclick="if(event.target===this)closeNewPPAModal()">
+  <div style="background:#fff;border-radius:var(--radius-xl);width:100%;max-width:600px;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow-lg)">
+    <div style="padding:14px 18px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:#fff;z-index:1">
+      <div style="width:30px;height:30px;border-radius:8px;background:#e0f2fe;display:flex;align-items:center;justify-content:center"><i class="ti ti-solar-panel" style="font-size:16px;color:#0ea5e9"></i></div>
+      <div style="flex:1;font-size:15px;font-weight:600">新規PPA案件を追加</div>
+      <button onclick="closeNewPPAModal()" style="border:none;background:none;cursor:pointer;font-size:18px;color:var(--sub)">✕</button>
+    </div>
+    <div style="padding:16px 18px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div style="grid-column:1/-1"><div class="flabel">案件名 <span style="color:var(--red)">*</span></div><input placeholder="例：○○工業団地PPA" oninput="newPPAForm.name=this.value"></div>
+        <div><div class="flabel">顧客名 <span style="color:var(--red)">*</span></div><input placeholder="例：株式会社○○" oninput="newPPAForm.customer=this.value"></div>
+        <div><div class="flabel">担当者</div><input placeholder="例：田中" oninput="newPPAForm.assignee=this.value"></div>
+      </div>
+      <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:12px;font-weight:600;color:#0369a1;margin-bottom:10px"><i class="ti ti-solar-panel" style="font-size:13px;vertical-align:-1px;margin-right:4px"></i>PPA固有情報</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <div><div class="flabel">契約期間（年）</div><input type="number" value="15" oninput="newPPAForm.contractYears=this.value"></div>
+          <div><div class="flabel">サイト数</div><input type="number" value="1" oninput="newPPAForm.sites=this.value"></div>
+          <div><div class="flabel">設置容量（kW）</div><input type="number" placeholder="500" oninput="newPPAForm.capacityKw=this.value"></div>
+          <div><div class="flabel">年間売電収入（円）</div><input type="number" placeholder="5000000" oninput="newPPAForm.annualRevenue=this.value"></div>
+          <div><div class="flabel">投資金額（円）</div><input type="number" placeholder="50000000" oninput="newPPAForm.investAmount=this.value"></div>
+          <div><div class="flabel">想定IRR（%）</div><input type="number" step="0.1" placeholder="8.5" oninput="newPPAForm.irr=this.value"></div>
+        </div>
+      </div>
+      <button class="btn btn-p" style="width:100%;padding:10px;font-size:13px;background:#0ea5e9;border-color:#0ea5e9" onclick="saveNewPPACase()"><i class="ti ti-plus" style="font-size:13px;vertical-align:-2px;margin-right:4px"></i>PPA案件を追加する</button>
     </div>
   </div>
 </div>
@@ -1090,7 +1119,7 @@ async function openActModal(id){
     </div>`;
   }
   // Build tag selector
-  const allT=[...new Set([...getAllCases(),...CH].flatMap(x=>x.tags||[]))].sort();
+  const allT=[...new Set([...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].flatMap(x=>x.tags||[]))].sort();
   const presetTags=["太陽光","企業版ふるさと納税","MaaS","ハウス","アクア","EPC","PPA","営農型","フレキシブル","蓄電池","包括連携","復興","観光","B-nozzle","EV","大型","自治体"];
   const allTagsMerged=[...new Set([...presetTags,...allT])].sort();
   const curTags=src.tags||[];
@@ -1222,6 +1251,16 @@ async function saveEditBasic(id, isCH, isBank){
   }catch(e){console.error("saveEditBasic error:",e);toast("保存エラー: "+e.message);}
 }
 
+async function savePPAField(id, key, rawVal){
+  const src=[...getAllPPACases()].find(x=>x.id===id);
+  if(!src){toast("PPA案件が見つかりません");return;}
+  try{
+    const numKeys=["contractYears","sites","capacityKw","annualRevenue","unitPrice","investAmount","irr"];
+    src[key]=numKeys.includes(key)?(rawVal===''?0:parseFloat(rawVal)||0):rawVal.trim();
+    const ok=await saveCase(src);
+    if(ok){toast("✓ 保存しました");openActModal(id);render();}
+  }catch(e){toast("保存エラー: "+e.message);}
+}
 async function clearReminder(caseId, actId){
   const list=acts[caseId]||[];
   const a=list.find(x=>x.id===actId);if(!a)return;
@@ -2028,12 +2067,12 @@ function downloadCSV(filename, rows, headers){
   toast("✓ CSVをダウンロードしました");
 }
 function exportCases(){
-  const headers=['種別','案件名','顧客名','担当者','ステータス','想定収益','太陽光容量','蓄電池容量','IRR','投資回収年数','タグ','備考','活動件数'];
+  const headers=['種別','案件名','顧客名','担当者','ステータス','受注金額','太陽光容量','蓄電池容量','IRR','投資回収年数','タグ','備考','活動件数'];
   const rows=getAllCases().map(p=>[p.kind,p.name,p.customer,p.assignee,p.status,p.revenue||'',p.solar||'',p.battery||'',p.irr||'',p.payback||'',(p.tags||[]).join('|'),p.note||'',actCount(p.id)]);
   downloadCSV('企業案件_'+today()+'.csv',rows,headers);
 }
 function exportBankCases(){
-  const headers=['案件名','顧客名','担当者','ステータス','想定収益','タグ','備考','活動件数'];
+  const headers=['案件名','顧客名','担当者','ステータス','受注金額','タグ','備考','活動件数'];
   const rows=getAllBankCases().map(p=>[p.name,p.customer,p.assignee||'',p.status,p.revenue||'',(p.tags||[]).join('|'),p.note||'',actCount(p.id)]);
   downloadCSV('銀行案件_'+today()+'.csv',rows,headers);
 }
@@ -2081,7 +2120,7 @@ function showBd(type){
       <span class="badge ${p.kind==='GX'?'bt':p.kind==='銀行'?'bt':'bp'}">${p.kind}</span>
       <span style="flex:1;font-size:13px;font-weight:500">${p.name}</span>
       <div style="text-align:right">
-        ${(p.orderAmount||0)>0?`<div style="font-weight:700;color:var(--green);font-size:13px">${yen(p.orderAmount)}</div><div style="font-size:10px;color:var(--sub2)">受注金額</div>`:`<div style="font-weight:600;color:var(--sub);font-size:13px">${yen(p.revenue||0)}</div><div style="font-size:10px;color:var(--sub2)">想定収益</div>`}
+        ${(p.orderAmount||0)>0?`<div style="font-weight:700;color:var(--green);font-size:13px">${yen(p.orderAmount)}</div><div style="font-size:10px;color:var(--sub2)">受注金額</div>`:`<div style="font-weight:600;color:var(--sub);font-size:13px">${yen(p.revenue||0)}</div><div style="font-size:10px;color:var(--sub2)">受注金額</div>`}
       </div>
     </div>`).join('')||'<div style="color:var(--sub2);text-align:center;padding:20px">受注済案件がありません</div>');
   } else if(type==='cities'){
