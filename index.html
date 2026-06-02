@@ -262,6 +262,7 @@ tr.sel td{background:var(--blue-light)}
     <div id="sync-dot"></div>
     <span id="sync-label" style="font-size:11px;color:var(--sub2)">接続中…</span>
   </div>
+  <button onclick="signOut()" class="btn btn-sm" title="ログアウト" style="margin-left:6px"><i class="ti ti-logout"></i></button>
 </div>
 
 <div id="wrap">
@@ -447,6 +448,7 @@ tr.sel td{background:var(--blue-light)}
 <!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 
 <script>
 // ═══════════════════ STATIC DATA ═══════════════════
@@ -662,27 +664,74 @@ function saveConfig(){
   initFirebase(cfg);
 }
 function skipSetup(){
-  localMode=true;
-  localStorage.setItem("crm_local_mode","1");
-  loadLocal();
-  setSyncStatus(false,"ローカルモード");
-  render();
+  // 機密データ保護のためローカルモードは無効化（認証バイパスを防ぐ）
+  showLoginGate("カクイチのアカウントでログインしてください");
 }
+
+const ALLOWED_DOMAIN = "kaku-ichi.co.jp";
+let authReady = false;
 
 function initFirebase(cfg){
   try{
     if(firebase.apps.length===0)firebase.initializeApp(cfg);
     else firebase.app();
     db=firebase.database();
-    setSyncStatus(null,"接続中…");
-    startListeners();
-    render();
+
+    firebase.auth().onAuthStateChanged(user=>{
+      if(user && user.email && user.email.toLowerCase().endsWith("@"+ALLOWED_DOMAIN)){
+        // 許可ユーザー
+        hideLoginGate();
+        if(!authReady){                 // リスナーの二重登録を防ぐ
+          authReady = true;
+          setSyncStatus(null,"接続中…");
+          startListeners();
+        }
+        render();
+      } else if(user){
+        // ドメイン外でログイン → 即サインアウトして弾く
+        firebase.auth().signOut();
+        showLoginGate("カクイチのアカウント（@"+ALLOWED_DOMAIN+"）でのみ利用できます");
+      } else {
+        // 未ログイン
+        authReady = false;
+        showLoginGate();
+      }
+    });
   }catch(e){
     const err=document.getElementById("cfg-err");
-    err.textContent="接続に失敗しました: "+e.message;
-    err.style.display="block";
+    if(err){err.textContent="接続に失敗しました: "+e.message;err.style.display="block";}
   }
 }
+
+// ── ログインゲート（本体DOMを壊さずオーバーレイ表示） ──
+function showLoginGate(msg){
+  const existing=document.getElementById("login-gate");
+  if(existing){ if(msg)document.getElementById("login-gate-msg").textContent=msg; return; }
+  const g=document.createElement("div");
+  g.id="login-gate";
+  g.style.cssText="position:fixed;inset:0;z-index:9999;background:#f9fafb;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;font-family:-apple-system,'Hiragino Kaku Gothic ProN',sans-serif";
+  g.innerHTML=`
+    <div style="width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#2563eb,#1d4ed8);display:flex;align-items:center;justify-content:center">
+      <i class="ti ti-bolt" style="color:#fff;font-size:24px"></i>
+    </div>
+    <div style="font-size:18px;font-weight:700;color:#111827">GX×地方創生 チームCRM</div>
+    <div id="login-gate-msg" style="font-size:13px;color:#6b7280">${msg||"カクイチのアカウントでログインしてください"}</div>
+    <button onclick="signIn()" style="display:flex;align-items:center;gap:8px;padding:11px 26px;background:#fff;border:1.5px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:500;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+      <i class="ti ti-brand-google" style="font-size:18px;color:#4285f4"></i> Googleでログイン
+    </button>`;
+  document.body.appendChild(g);
+}
+function hideLoginGate(){ document.getElementById("login-gate")?.remove(); }
+
+function signIn(){
+  const provider=new firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ hd: ALLOWED_DOMAIN }); // 社内ドメインを優先表示
+  firebase.auth().signInWithPopup(provider).catch(e=>{
+    const m=document.getElementById("login-gate-msg");
+    if(m)m.textContent="ログイン失敗: "+e.message;
+  });
+}
+function signOut(){ firebase.auth().signOut(); }
 
 function setSyncStatus(ok, label){
   const dot=document.getElementById("sync-dot");
