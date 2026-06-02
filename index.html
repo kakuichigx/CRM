@@ -579,7 +579,7 @@ function remLabel(s){const d=daysDiff(s);if(d===null)return"";if(d<0)return`<spa
 
 // ═══════════════════ FIREBASE / STORAGE ═══════════════════
 let db=null, localMode=false;
-let acts={}, caseExtra={}, cityExtra={}, userCases=[];
+let acts={}, caseExtra={}, cityExtra={}, userCases=[], deletedIds=new Set(), attachments={};
 let form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]};
 let newCaseForm={kind:"企業",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
 let tagInput="", dragId=null, editActKey=null, editActId=null;
@@ -733,7 +733,7 @@ function startListeners(){
   db.ref("crm/user_cases").on("value",snap=>{
     const raw=snap.val()||{};
     userCases=Object.values(raw);
-    userCases.forEach(p=>{if(caseExtra[p.id]?.status)p.status=caseExtra[p.id].status;if(caseExtra[p.id]?.tags)p.tags=caseExtra[p.id].tags;});
+    userCases.forEach(p=>{const ce=caseExtra[p.id]||{};if(ce.status)p.status=ce.status;if(ce.tags)p.tags=ce.tags;if(ce.orderAmount!==undefined)p.orderAmount=ce.orderAmount;if(ce.estimate!==undefined)p.estimate=ce.estimate;if(ce.closeDate)p.closeDate=ce.closeDate;if(ce.heat!==undefined)p.heat=ce.heat;});
     render();
   });
   db.ref("crm/user_cities").on("value",snap=>{
