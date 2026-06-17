@@ -1552,7 +1552,7 @@ function renderD(){
   else{pEnd=new Date(now.getFullYear(),now.getMonth()+1,20,23,59,59);pStart=new Date(now.getFullYear(),now.getMonth(),21);}
   let mitsumoriCnt=0;
   Object.values(acts).flat().forEach(a=>{if(a.action==="見積提出"){const d=new Date(a.date);if(d>=pStart&&d<=pEnd)mitsumoriCnt+=(a.count||1);}});
-  const mitPct=Math.min(mitsumoriCnt/40*100,100);
+  const mitPct=Math.min(mitsumoriCnt/20*100,100);
   const psStr=`${pStart.getMonth()+1}/${pStart.getDate()}`;
   const peStr=`${pEnd.getMonth()+1}/${pEnd.getDate()}`;
 
@@ -1596,8 +1596,8 @@ function renderD(){
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('mitsumori')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--amber-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-receipt" style="font-size:14px;color:var(--amber)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">見積件数 ›</span></div>
-      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/40</span></div>
-      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=40?"var(--green)":mitsumoriCnt>=20?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
+      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/20</span></div>
+      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
       <div style="font-size:10px;color:var(--sub2);margin-top:2px">${psStr}〜${peStr}締め</div>
     </div>
   
@@ -2191,11 +2191,11 @@ function showBd(type){
     });
     mActs.sort((a,b)=>new Date(b.date)-new Date(a.date));
     const total=mActs.reduce((s,a)=>s+(a.count||1),0);
-    const pct=Math.min(total/40*100,100);
+    const pct=Math.min(total/20*100,100);
     html=`<div style="text-align:center;padding:14px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
-      <div style="font-size:36px;font-weight:700;color:${total>=40?'var(--green)':total>=20?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:15px;font-weight:400;color:var(--sub2)"> / 40件</span></div>
+      <div style="font-size:36px;font-weight:700;color:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:15px;font-weight:400;color:var(--sub2)"> / 20件</span></div>
       <div style="margin:10px 0 6px;background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden">
-        <div style="width:${pct}%;height:100%;background:${total>=40?'var(--green)':total>=20?'var(--amber)':'var(--blue)'};border-radius:6px;transition:width .5s"></div>
+        <div style="width:${pct}%;height:100%;background:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'};border-radius:6px;transition:width .5s"></div>
       </div>
       <div style="font-size:11px;color:var(--sub2)">${pStart.toLocaleDateString('ja-JP')} 〜 ${pEnd.toLocaleDateString('ja-JP')} 締め</div>
     </div>
