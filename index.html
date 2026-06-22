@@ -2179,18 +2179,20 @@ function showBd(type){
     titleText='見積件数 詳細';
     // 締め期間を計算する関数（20日締め）
     function getPeriod(offset){
-      const base=new Date();
-      base.setMonth(base.getMonth()+offset);
-      let ps,pe;
-      if(base.getDate()<=20||offset<0){pe=new Date(base.getFullYear(),base.getMonth(),20,23,59,59);ps=new Date(base.getFullYear(),base.getMonth()-1,21);}
-      else{pe=new Date(base.getFullYear(),base.getMonth()+1,20,23,59,59);ps=new Date(base.getFullYear(),base.getMonth(),21);}
+      // 当期の「締め月」を決める：今日が20日以前なら今月、21日以降なら翌月が締め月
+      const t=new Date();
+      let anchorY=t.getFullYear(), anchorM=t.getMonth(); // 締め月（その月の20日が締め日）
+      if(t.getDate()>20)anchorM+=1;
+      // offset分ずらす
+      anchorM+=offset;
+      // 締め期間: (締め月-1)/21 〜 締め月/20
+      const pe=new Date(anchorY,anchorM,20,23,59,59);
+      const ps=new Date(anchorY,anchorM-1,21);
       return{ps,pe};
     }
     // 現在の締め期間
-    const now2=new Date();
-    let pStart,pEnd;
-    if(now2.getDate()<=20){pEnd=new Date(now2.getFullYear(),now2.getMonth(),20,23,59,59);pStart=new Date(now2.getFullYear(),now2.getMonth()-1,21);}
-    else{pEnd=new Date(now2.getFullYear(),now2.getMonth()+1,20,23,59,59);pStart=new Date(now2.getFullYear(),now2.getMonth(),21);}
+    const cur=getPeriod(0);
+    const pStart=cur.ps, pEnd=cur.pe;
     // 全見積提出を収集
     const allMit=[];
     Object.entries(acts).forEach(([key,list])=>{
