@@ -271,6 +271,7 @@ tr.sel td{background:var(--blue-light)}
     <button class="tb" onclick="switchTab('b',this)"><i class="ti ti-building-bank"></i>銀行案件</button>
     <button class="tb" onclick="switchTab('m',this)"><i class="ti ti-building-community"></i>地方創生</button>
     <button class="tb" onclick="switchTab('ppa',this)"><i class="ti ti-solar-panel"></i>PPA案件</button>
+    <button class="tb" onclick="switchTab('s',this)"><i class="ti ti-cash"></i>売上管理</button>
     <button class="tb" onclick="switchTab('a',this)"><i class="ti ti-history"></i>活動履歴</button>
   </div>
   <div class="content" id="content"></div>
@@ -480,6 +481,11 @@ function getAllPPACases(){
 }
 let ppaQ="",ppaSt="すべて",ppaAssignee="すべて";
 let newPPAForm={name:"",customer:"",assignee:"",status:"初期商談",contractYears:15,capacityKw:0,annualRevenue:0,irr:0,sites:1,unitPrice:0,investAmount:0,note:"",tags:[]};
+let userSales=[];
+function getAllSales(){return userSales.filter(x=>!deletedIds.has(x.id));}
+let salesQ="", salesAssignee="すべて", salesKind="すべて", salesMonth="";
+let salesGoal=0; // crm/settings から読み込み
+const SALES_KINDS=["物販","PPA","工事","保守","その他"];
 const PPA_STATUSES=["初期商談","現地調査","提案中","見積作成中","最終交渉中","契約締結","設置工事","運用中","更新交渉中","失注","契約終了"];
 const PPA_STATUS_FLOW=[
   {key:"初期商談",label:"初期商談",icon:"ti-message",color:"#7c3aed",desc:"最初の接触"},
@@ -571,7 +577,19 @@ function getCurrentKi(){return getFiscalKi(today());}
 function isInKi(dateStr,ki){return getFiscalKi(dateStr)===ki;}
 let dashKi=getCurrentKi();
 let annualGoalOrder=15000000000,annualGoalPPA=0; // 受注+PPA合計目標150億
-function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400);}
+function toast(msg){const t=document.getElementById("toast");t.innerHTML=msg;t.classList.add("show");clearTimeout(window._toastT);window._toastT=setTimeout(()=>t.classList.remove("show"),2400);}
+let _undoData=null;
+function toastUndo(msg, undoFn){
+  const t=document.getElementById("toast");
+  _undoData=undoFn;
+  t.innerHTML=msg+' <button onclick="doUndo()" style="margin-left:10px;background:rgba(255,255,255,.25);color:#fff;border:1px solid rgba(255,255,255,.4);border-radius:5px;padding:2px 10px;font-size:12px;font-weight:600;cursor:pointer">元に戻す</button>';
+  t.classList.add("show");
+  clearTimeout(window._toastT);
+  window._toastT=setTimeout(()=>{t.classList.remove("show");_undoData=null;},6000);
+}
+async function doUndo(){
+  if(_undoData){const fn=_undoData;_undoData=null;document.getElementById("toast").classList.remove("show");await fn();}
+}
 function actCount(k){return(acts[k]||[]).length;}
 function daysDiff(s){if(!s)return null;const d=new Date(s),n=new Date();n.setHours(0,0,0,0);return Math.floor((d-n)/86400000);}
 function remClass(s){const d=daysDiff(s);if(d===null)return"";if(d<0)return"rem-over";if(d<=3)return"rem-soon";return"rem-ok";}
@@ -579,17 +597,26 @@ function remLabel(s){const d=daysDiff(s);if(d===null)return"";if(d<0)return`<spa
 
 // ═══════════════════ FIREBASE / STORAGE ═══════════════════
 let db=null, localMode=false;
-let acts={}, caseExtra={}, cityExtra={}, userCases=[], deletedIds=new Set(), attachments={};
+let acts={}, caseExtra={}, cityExtra={}, userCases=[], deletedIds=new Set(), attachments={}, fbAssignees=[];
 let form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]};
 let newCaseForm={kind:"企業",name:"",customer:"",assignee:"",status:"初期商談",solar:0,battery:0,revenue:0,irr:0,payback:0,note:"",tags:[]};
 let tagInput="", dragId=null, editActKey=null, editActId=null;
 function getAllCases(){return[...GXP,...CORP,...userCases].filter(x=>!deletedIds.has(x.id));}
 function getAllAssignees(){
-  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
-  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
-  return[...new Set([...stored,...fromCases])].sort((a,b)=>a.localeCompare(b,'ja'));
+  // Firebase共有リスト + 既存案件の担当者を統合（localStorageは移行用フォールバック）
+  const legacy=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
+  return[...new Set([...fbAssignees,...legacy,...fromCases])].sort((a,b)=>a.localeCompare(b,'ja'));
 }
-function saveAssignees(list){localStorage.setItem('crm_assignees',JSON.stringify(list));}
+async function addAssigneeDB(name){
+  if(!name)return;
+  const key=name.replace(/[.#$/\[\]]/g,'_');
+  await setDb("crm/assignees/"+key, name);
+}
+async function removeAssigneeDB(name){
+  const key=name.replace(/[.#$/\[\]]/g,'_');
+  await setDb("crm/assignees/"+key, null);
+}
 function openAssigneeManager(){
   document.getElementById('assignee-modal').style.display='flex';
   document.body.style.overflow='hidden';
@@ -601,8 +628,9 @@ function closeAssigneeManager(){
   render();
 }
 function renderAssigneeList(){
-  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
-  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
+  const legacy=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  const stored=[...new Set([...fbAssignees,...legacy])];
+  const fromCases=[...new Set([...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].map(x=>x.assignee).filter(Boolean))];
   const all=[...new Set([...stored,...fromCases])].sort((a,b)=>a.localeCompare(b,'ja'));
   const el=document.getElementById('assignee-list');
   if(!el)return;
@@ -617,19 +645,20 @@ function renderAssigneeList(){
     </div>`;
   }).join('')||'<div style="padding:20px;text-align:center;color:var(--sub2);font-size:13px">担当者がいません</div>';
 }
-function addAssignee(){
+async function addAssignee(){
   const input=document.getElementById('new-assignee-input');
   const name=input?.value?.trim();
   if(!name){toast("名前を入力してください");return;}
-  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
-  if(!stored.includes(name)){stored.push(name);saveAssignees(stored);}
+  await addAssigneeDB(name);
   input.value='';
-  toast("✓ 「"+name+"」を追加しました");
+  toast("✓ 「"+name+"」を追加しました（チーム共有）");
   renderAssigneeList();render();
 }
-function removeAssignee(name){
-  const stored=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
-  saveAssignees(stored.filter(a=>a!==name));
+async function removeAssignee(name){
+  await removeAssigneeDB(name);
+  // localStorageの旧データも削除
+  const legacy=JSON.parse(localStorage.getItem('crm_assignees')||'[]');
+  localStorage.setItem('crm_assignees',JSON.stringify(legacy.filter(a=>a!==name)));
   toast("削除しました");
   renderAssigneeList();render();
 }
@@ -707,6 +736,18 @@ function startListeners(){
     deletedIds=new Set(Object.keys(raw).filter(k=>raw[k]));
     render();
   });
+  db.ref("crm/settings").on("value",snap=>{
+    const s=snap.val()||{};
+    if(s.salesGoal!==undefined)salesGoal=s.salesGoal;
+    if(s.annualGoalOrder!==undefined)annualGoalOrder=s.annualGoalOrder;
+    if(s.annualGoalPPA!==undefined)annualGoalPPA=s.annualGoalPPA;
+    render();
+  });
+  db.ref("crm/assignees").on("value",snap=>{
+    const raw=snap.val()||{};
+    fbAssignees=Object.values(raw).filter(Boolean);
+    render();
+  });
   db.ref("crm/case_extra").on("value",snap=>{
     caseExtra=snap.val()||{};
     getAllCases().forEach(p=>{
@@ -741,6 +782,11 @@ function startListeners(){
     userCities=Object.values(raw).map(c=>({...c,isUser:true}));
     render();
   });
+  db.ref("crm/user_sales").on("value",snap=>{
+    const raw=snap.val()||{};
+    userSales=Object.values(raw);
+    render();
+  });
   db.ref("crm/user_ppa_cases").on("value",snap=>{
     const raw=snap.val()||{};
     userPPACases=Object.values(raw).map(p=>({...p,kind:"PPA",isUser:true}));
@@ -769,6 +815,9 @@ async function setDb(path, val){
   } else { saveLocal(); return true; }
 }
 
+async function saveSettings(){
+  await setDb("crm/settings",{salesGoal,annualGoalOrder,annualGoalPPA});
+}
 // ── Unified case save (atomic) ──
 async function saveCase(p){
   if(!p||!p.id)return false;
@@ -1261,6 +1310,25 @@ async function savePPAField(id, key, rawVal){
     if(ok){toast("✓ 保存しました");openActModal(id);render();}
   }catch(e){toast("保存エラー: "+e.message);}
 }
+// ═══ 売上 CRUD ═══
+async function deleteSales(id){
+  if(!confirm("この売上記録を削除しますか？"))return;
+  const src=getAllSales().find(x=>x.id===id);
+  const snapshot=src?JSON.parse(JSON.stringify(src)):null;
+  await setDb("crm/user_sales/"+id, null);
+  toastUndo("削除しました",async()=>{await setDb("crm/user_sales/"+id,snapshot);toast("✓ 元に戻しました");render();});
+  render();
+}
+// 締め期間（20日締め、見積と共通）
+function getSalesPeriod(offset){
+  const t=new Date();
+  let aY=t.getFullYear(), aM=t.getMonth();
+  if(t.getDate()>20)aM+=1;
+  aM+=offset;
+  return{ps:new Date(aY,aM-1,21),pe:new Date(aY,aM,20,23,59,59)};
+}
+function salesPeriodLabel(ps,pe){return(ps.getMonth()+1)+'/21〜'+(pe.getMonth()+1)+'/20';}
+
 async function clearReminder(caseId, actId){
   const list=acts[caseId]||[];
   const a=list.find(x=>x.id===actId);if(!a)return;
@@ -1395,13 +1463,17 @@ async function saveNewCity(){
 async function deleteCity(id){
   if(!confirm("この自治体を削除しますか？"))return;
   const src=[...CH,...userCities].find(x=>x.id===id);
+  const snapshot=src?JSON.parse(JSON.stringify(src)):null;
   if(src&&src.isUser){
     await setDb("crm/user_cities/"+id, null);
+    closeActModal();
+    toastUndo("削除しました",async()=>{await setDb("crm/user_cities/"+id,snapshot);toast("✓ 元に戻しました");render();});
   } else {
     await setDb("crm/deleted_ids/"+id, true);
+    closeActModal();
+    toastUndo("削除しました",async()=>{await setDb("crm/deleted_ids/"+id,null);toast("✓ 元に戻しました");render();});
   }
-  await setDb("crm/acts/"+id, null);
-  closeActModal();toast("削除しました");render();
+  render();
 }
 function openNewCityModal(){
   document.getElementById('new-city-modal').style.display='flex';
@@ -1431,15 +1503,28 @@ async function saveNewCase(){
 async function deleteCase(id){
   if(!confirm("この案件を削除しますか？"))return;
   const src=[...GXP,...CORP,...BANKP,...userCases,...userBankCases].find(x=>x.id===id);
+  const snapshot=src?JSON.parse(JSON.stringify(src)):null;
+  const snapActs=acts[id]?JSON.parse(JSON.stringify(acts[id])):null;
+  const snapExtra=caseExtra[id]?JSON.parse(JSON.stringify(caseExtra[id])):null;
   if(src&&src.isUser){
     const isBank=userBankCases.some(x=>x.id===id);
     const path=isBank?"crm/user_bank_cases/":"crm/user_cases/";
     if(db){try{await db.ref().update({[path+id]:null,["crm/acts/"+id]:null,["crm/case_extra/"+id]:null});}catch(e){toast("削除エラー:"+e.message);return;}}
+    closeActModal();
+    toastUndo("削除しました",async()=>{
+      const restore={};restore[path+id]=snapshot;
+      if(snapActs)restore["crm/acts/"+id]=snapActs;
+      if(snapExtra)restore["crm/case_extra/"+id]=snapExtra;
+      await db.ref().update(restore);toast("✓ 元に戻しました");render();
+    });
   } else {
     await setDb("crm/deleted_ids/"+id, true);
-    await setDb("crm/acts/"+id, null);
+    closeActModal();
+    toastUndo("削除しました",async()=>{
+      await setDb("crm/deleted_ids/"+id, null);toast("✓ 元に戻しました");render();
+    });
   }
-  closeActModal();toast("削除しました");render();
+  render();
 }
 function openNewCaseModal(){
   document.getElementById('new-case-modal').style.display='flex';
@@ -1553,6 +1638,10 @@ function renderD(){
   let mitsumoriCnt=0;
   Object.values(acts).flat().forEach(a=>{if(a.action==="見積提出"){const d=new Date(a.date);if(d>=pStart&&d<=pEnd)mitsumoriCnt+=(a.count||1);}});
   const mitPct=Math.min(mitsumoriCnt/20*100,100);
+  // 今月売上（20日締め）
+  let salesStart,salesEnd;
+  { const st=new Date(); let aY=st.getFullYear(),aM=st.getMonth(); if(st.getDate()>20)aM+=1; salesStart=new Date(aY,aM-1,21); salesEnd=new Date(aY,aM,20,23,59,59); }
+  const curSalesTotal=getAllSales().filter(s=>{const d=new Date(s.date);return d>=salesStart&&d<=salesEnd;}).reduce((sum,s)=>sum+(s.amount||0),0);
   const psStr=`${pStart.getMonth()+1}/${pStart.getDate()}`;
   const peStr=`${pEnd.getMonth()+1}/${pEnd.getDate()}`;
 
@@ -1576,7 +1665,7 @@ function renderD(){
     ${dashKi!==getCurrentKi()?`<button onclick="dashKi=getCurrentKi();render()" style="font-size:11px;padding:3px 10px;border:1px solid var(--blue);color:var(--blue);background:none;border-radius:6px;cursor:pointer">今期に戻る</button>`:""}
     <div style="margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
       <span style="font-size:11px;color:var(--sub2)">年間目標:</span>
-      <input type="number" placeholder="合計目標(億)" value="${annualGoalOrder/1e8}" oninput="annualGoalOrder=parseFloat(this.value||0)*1e8;render()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
+      <input type="number" placeholder="合計目標(億)" value="${annualGoalOrder/1e8}" oninput="annualGoalOrder=parseFloat(this.value||0)*1e8;render()" onchange="saveSettings()" style="width:90px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px">
       <span style="font-size:11px;color:var(--sub2)">億円</span>
     </div>
   </div>
@@ -1599,6 +1688,11 @@ function renderD(){
       <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/20</span></div>
       <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
       <div style="font-size:10px;color:var(--sub2);margin-top:2px">${psStr}〜${peStr}締め</div>
+    </div>
+    <div class="metric" style="border-left:3px solid var(--green);cursor:pointer" onclick="showBd('sales')">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-cash" style="font-size:14px;color:var(--green)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">今月売上 ›</span></div>
+      <div style="font-size:18px;font-weight:700;color:var(--green)">${curSalesTotal>0?yen(curSalesTotal):"−"}</div>
+      <div style="font-size:10px;color:var(--sub2)">20日締め</div>
     </div>
   
     <div class="metric" style="border-left:3px solid var(--blue);cursor:pointer" onclick="showBd('cases')">
@@ -2045,11 +2139,153 @@ async function saveNewPPACase(){
 }
 async function deletePPACase(id){
   if(!confirm("このPPA案件を削除しますか？"))return;
-  await setDb("crm/user_ppa_cases/"+id, null);await setDb("crm/acts/"+id, null);
-  closeActModal();toast("削除しました");render();
+  const src=getAllPPACases().find(x=>x.id===id);
+  const snapshot=src?JSON.parse(JSON.stringify(src)):null;
+  const snapActs=acts[id]?JSON.parse(JSON.stringify(acts[id])):null;
+  if(src&&src.isUser){
+    await setDb("crm/user_ppa_cases/"+id, null);
+    closeActModal();
+    toastUndo("削除しました",async()=>{
+      await setDb("crm/user_ppa_cases/"+id,snapshot);
+      if(snapActs)await setDb("crm/acts/"+id,snapActs);
+      toast("✓ 元に戻しました");render();
+    });
+  } else {
+    await setDb("crm/deleted_ids/"+id, true);
+    closeActModal();
+    toastUndo("削除しました",async()=>{await setDb("crm/deleted_ids/"+id,null);toast("✓ 元に戻しました");render();});
+  }
+  render();
 }
 function openNewPPAModal(){document.getElementById("new-ppa-modal").style.display="flex";document.body.style.overflow="hidden";}
 function closeNewPPAModal(){document.getElementById("new-ppa-modal").style.display="none";document.body.style.overflow="";}
+
+// ═══════════════════ 売上管理 ═══════════════════
+function renderS(){
+  const all=getAllSales();
+  // 当期
+  const cur=getSalesPeriod(0);
+  let fp=[...all].sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  // 当期売上
+  const curSales=all.filter(s=>{const d=new Date(s.date);return d>=cur.ps&&d<=cur.pe;});
+  const curTotal=curSales.reduce((sum,s)=>sum+(s.amount||0),0);
+  const goalPct=salesGoal>0?Math.min(curTotal/salesGoal*100,100):0;
+
+  // 過去12期間の推移
+  const periodStats=[];
+  for(let i=0;i<12;i++){
+    const p=getSalesPeriod(-i);
+    const inP=all.filter(s=>{const d=new Date(s.date);return d>=p.ps&&d<=p.pe;});
+    const cnt=inP.reduce((sum,s)=>sum+(s.amount||0),0);
+    periodStats.push({...p,cnt,label:salesPeriodLabel(p.ps,p.pe),isCurrent:i===0});
+  }
+  const maxP=Math.max(...periodStats.map(p=>p.cnt),1);
+  const prevTotal=periodStats[1]?.cnt||0;
+  const momPct=prevTotal>0?((curTotal-prevTotal)/prevTotal*100):0;
+
+  // 区分別集計（当期）
+  const byKind={};SALES_KINDS.forEach(k=>byKind[k]=0);
+  curSales.forEach(s=>{if(byKind[s.kind]!==undefined)byKind[s.kind]+=(s.amount||0);});
+
+  // 担当者別（当期）
+  const byUser={};curSales.forEach(s=>{if(s.assignee)byUser[s.assignee]=(byUser[s.assignee]||0)+(s.amount||0);});
+  const userRank=Object.entries(byUser).sort((a,b)=>b[1]-a[1]);
+
+  const kindColor={物販:"var(--blue)",PPA:"#0ea5e9",工事:"var(--amber)",保守:"var(--teal)",その他:"var(--sub2)"};
+
+  const rows=fp.map(s=>{
+    const linkedCase=s.caseId?[...getAllCases(),...getAllBankCases(),...getAllPPACases()].find(x=>x.id===s.caseId):null;
+    return`<tr class="row">
+      <td style="white-space:nowrap;font-size:12px">${s.date}</td>
+      <td style="font-weight:500">${s.customer}</td>
+      <td><span style="font-size:10px;padding:1px 7px;border-radius:5px;font-weight:600;background:${(kindColor[s.kind]||'var(--sub2)')}18;color:${kindColor[s.kind]||'var(--sub2)'}">${s.kind}</span></td>
+      <td style="font-size:12px;color:var(--sub2)">${s.assignee||"−"}</td>
+      <td style="text-align:right;font-weight:700;color:var(--green)">${yen(s.amount||0)}</td>
+      <td style="font-size:11px;color:var(--sub2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${linkedCase?linkedCase.name:(s.note||"−")}</td>
+      <td><button onclick="deleteSales('${s.id}')" style="border:none;background:none;cursor:pointer;color:#ccc;font-size:13px" onmouseover="this.style.color='#dc2626'" onmouseout="this.style.color='#ccc'">❌</button></td>
+    </tr>`;
+  }).join("");
+
+  return`
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px">
+    <div class="metric" style="border-left:3px solid var(--green)">
+      <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">当期売上</div>
+      <div style="font-size:22px;font-weight:700;color:var(--green)">${yen(curTotal)}</div>
+      <div style="font-size:10px;color:var(--sub2)">${salesPeriodLabel(cur.ps,cur.pe)}</div>
+      ${salesGoal>0?`<div style="margin-top:6px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${goalPct.toFixed(0)}%;height:100%;background:var(--green);border-radius:4px"></div></div><div style="font-size:10px;color:var(--sub2);margin-top:2px">目標${yen(salesGoal)} (${goalPct.toFixed(0)}%)</div>`:""}
+    </div>
+    <div class="metric" style="border-left:3px solid var(--blue)">
+      <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">前期比</div>
+      <div style="font-size:22px;font-weight:700;color:${momPct>=0?'var(--green)':'var(--red)'}">${momPct>=0?'+':''}${momPct.toFixed(0)}%</div>
+      <div style="font-size:10px;color:var(--sub2)">前期 ${yen(prevTotal)}</div>
+    </div>
+    <div class="metric" style="border-left:3px solid var(--amber)">
+      <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">当期件数</div>
+      <div style="font-size:22px;font-weight:700">${curSales.length}</div>
+      <div style="font-size:10px;color:var(--sub2)">件</div>
+    </div>
+    <div class="metric" style="border-left:3px solid var(--purple)">
+      <div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:4px">累計売上</div>
+      <div style="font-size:18px;font-weight:700">${yen(all.reduce((s,x)=>s+(x.amount||0),0))}</div>
+      <div style="font-size:10px;color:var(--sub2)">全${all.length}件</div>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+    <span style="font-size:11px;color:var(--sub2)">月次目標:</span>
+    <input type="number" placeholder="目標(万円)" value="${salesGoal?salesGoal/1e4:''}" oninput="salesGoal=parseFloat(this.value||0)*1e4;render()" onchange="saveSettings()" style="width:110px;font-size:12px;padding:5px 8px;border:1px solid var(--border);border-radius:6px">
+    <span style="font-size:11px;color:var(--sub2)">万円</span>
+  </div>
+
+  <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase;letter-spacing:.3px">締め期間ごとの売上推移（過去12ヶ月）</div>
+  <div style="margin-bottom:16px">
+    ${periodStats.map(p=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      <span style="min-width:90px;font-size:11px;color:${p.isCurrent?'var(--blue)':'var(--sub2)'};font-weight:${p.isCurrent?'700':'400'};text-align:right;white-space:nowrap">${p.label}${p.isCurrent?' 📍':''}</span>
+      <div style="flex:1;background:var(--border-light);border-radius:5px;height:20px;overflow:hidden">
+        <div style="width:${p.cnt/maxP*100}%;height:100%;background:${p.isCurrent?'var(--green)':'#9ca3af'};border-radius:5px;min-width:${p.cnt>0?'50px':'0'};display:flex;align-items:center;justify-content:flex-end;padding-right:8px">
+          ${p.cnt>0?`<span style="font-size:10px;color:#fff;font-weight:700;white-space:nowrap">${yen(p.cnt)}</span>`:''}
+        </div>
+      </div>
+    </div>`).join('')}
+  </div>
+
+  ${curSales.length?`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div>
+      <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase">区分別（当期）</div>
+      ${SALES_KINDS.filter(k=>byKind[k]>0).map(k=>{const pct=curTotal>0?byKind[k]/curTotal*100:0;return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="min-width:44px;font-size:11px;color:var(--sub)">${k}</span>
+        <div style="flex:1;background:var(--border-light);border-radius:5px;height:16px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${kindColor[k]};border-radius:5px"></div></div>
+        <span style="font-size:11px;font-weight:600;min-width:60px;text-align:right">${yen(byKind[k])}</span>
+      </div>`;}).join('')||'<div style="font-size:12px;color:var(--sub2)">データなし</div>'}
+    </div>
+    <div>
+      <div style="font-size:11px;font-weight:700;color:var(--sub);margin-bottom:8px;text-transform:uppercase">担当者別（当期）</div>
+      ${userRank.length?userRank.map((u,i)=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="font-size:11px;color:var(--sub2);min-width:16px">${i+1}.</span>
+        <span style="flex:1;font-size:12px;font-weight:500">${u[0]}</span>
+        <span style="font-size:12px;font-weight:600;color:var(--green)">${yen(u[1])}</span>
+      </div>`).join(''):'<div style="font-size:12px;color:var(--sub2)">データなし</div>'}
+    </div>
+  </div>`:''}
+
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+    <span style="font-size:11px;color:var(--sub2);display:inline-flex;align-items:center;gap:4px"><i class="ti ti-eye" style="font-size:13px"></i>閲覧専用</span>
+    <button class="btn" onclick="exportSales()" style="padding:7px 12px;margin-left:auto" title="CSVダウンロード"><i class="ti ti-download" style="font-size:14px;vertical-align:-2px;margin-right:4px"></i>CSV</button>
+  </div>
+  ${fp.length===0?`<div style="padding:40px;text-align:center;color:var(--sub2)"><i class="ti ti-cash" style="font-size:36px;display:block;margin:0 auto 10px;opacity:.3"></i><div style="font-size:14px;font-weight:500;margin-bottom:6px">売上記録がありません</div><div style="font-size:13px;color:var(--sub2)">売上データは外部から登録されます</div></div>`:`<div class="scr"><table>
+    <thead><tr><th>計上日</th><th>顧客名</th><th>区分</th><th>担当</th><th style="text-align:right">金額</th><th>案件/メモ</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`}`;
+}
+function exportSales(){
+  const all=getAllSales();
+  const headers=['計上日','顧客名','区分','担当者','金額','メモ'];
+  const rows=all.map(s=>[s.date,s.customer,s.kind,s.assignee||'',s.amount||0,(s.note||'').replace(/,/g,' ')]);
+  const csv='\ufeff'+[headers.join(','),...rows.map(r=>r.join(','))].join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='売上_'+today()+'.csv';a.click();
+}
 
 // ═══════════════════ CSV出力 ═══════════════════
 function downloadCSV(filename, rows, headers){
@@ -2155,6 +2391,36 @@ function showBd(type){
         <span style="flex:1;font-size:13px;font-weight:500">${p.name}</span>
         <span style="font-size:11px;color:var(--sub2)">${p.assignee||''}</span>
       </div>`).join('');
+  } else if(type==='sales'){
+    titleText='売上 詳細';
+    // 締め期間（20日締め）
+    function getSP(offset){const t=new Date();let aY=t.getFullYear(),aM=t.getMonth();if(t.getDate()>20)aM+=1;aM+=offset;return{ps:new Date(aY,aM-1,21),pe:new Date(aY,aM,20,23,59,59)};}
+    function spLabel(ps,pe){return(ps.getMonth()+1)+'/21〜'+(pe.getMonth()+1)+'/20';}
+    const all=getAllSales();
+    const cur=getSP(0);
+    const curSales=all.filter(s=>{const d=new Date(s.date);return d>=cur.ps&&d<=cur.pe;}).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const total=curSales.reduce((sum,s)=>sum+(s.amount||0),0);
+    // 推移
+    const stats=[];for(let i=0;i<12;i++){const p=getSP(-i);const c=all.filter(s=>{const d=new Date(s.date);return d>=p.ps&&d<=p.pe;}).reduce((sum,s)=>sum+(s.amount||0),0);stats.push({...p,c,label:spLabel(p.ps,p.pe),isCur:i===0});}
+    const maxC=Math.max(...stats.map(p=>p.c),1);
+    const kindColor={物販:"var(--blue)",PPA:"#0ea5e9",工事:"var(--amber)",保守:"var(--teal)",その他:"var(--sub2)"};
+    html=`<div style="text-align:center;padding:14px;background:var(--green-light);border-radius:var(--radius);margin-bottom:14px">
+      <div style="font-size:11px;font-weight:600;color:var(--green)">当期売上</div>
+      <div style="font-size:30px;font-weight:700;color:var(--green)">${yen(total)}</div>
+      <div style="font-size:11px;color:var(--sub2);margin-top:4px">${spLabel(cur.ps,cur.pe)}締め・${curSales.length}件</div>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">締め期間ごとの推移（過去12ヶ月）</div>
+    <div style="margin-bottom:16px">${stats.map(p=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      <span style="min-width:90px;font-size:11px;color:${p.isCur?'var(--blue)':'var(--sub2)'};font-weight:${p.isCur?'700':'400'};text-align:right;white-space:nowrap">${p.label}${p.isCur?' 📍':''}</span>
+      <div style="flex:1;background:var(--border-light);border-radius:5px;height:18px;overflow:hidden"><div style="width:${p.c/maxC*100}%;height:100%;background:${p.isCur?'var(--green)':'#9ca3af'};border-radius:5px;min-width:${p.c>0?'50px':'0'};display:flex;align-items:center;justify-content:flex-end;padding-right:6px">${p.c>0?'<span style="font-size:10px;color:#fff;font-weight:700;white-space:nowrap">'+yen(p.c)+'</span>':''}</div></div>
+    </div>`).join('')}</div>
+    <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">当期の売上明細</div>
+    ${curSales.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-light)">
+      <span style="font-size:11px;color:var(--sub2);white-space:nowrap;min-width:72px">${s.date}</span>
+      <span style="flex:1;font-size:13px;font-weight:500">${s.customer}</span>
+      <span style="font-size:10px;padding:1px 7px;border-radius:5px;font-weight:600;background:${(kindColor[s.kind]||'var(--sub2)')}18;color:${kindColor[s.kind]||'var(--sub2)'}">${s.kind}</span>
+      <span style="font-weight:700;color:var(--green)">${yen(s.amount||0)}</span>
+    </div>`).join('')||'<div style="text-align:center;padding:24px;color:var(--sub2)">この期間の売上がありません</div>'}`;
   } else if(type==='ppaInvest'){
     titleText='PPA投資金額 内訳';
     const kiPPA=getAllPPACases().filter(p=>p.closeDate?isInKi(p.closeDate,dashKi):dashKi===getCurrentKi());
@@ -2262,7 +2528,7 @@ function gsNavigate(id, tab){
   document.getElementById('gs-dd').style.display='none';
   // Switch tab
   curTab=tab;
-  const ids=["d","c","b","m","ppa","a"];
+  const ids=["d","c","b","m","ppa","s","a"];
   document.querySelectorAll(".tb").forEach((b,i)=>b.classList.toggle("on",ids[i]===tab));
   render();
   // Open modal and scroll + highlight
@@ -2307,6 +2573,7 @@ function render(){
   else if(curTab==="b") body=renderB();
   else if(curTab==="m") body=renderM();
   else if(curTab==="ppa") body=renderPPA();
+  else if(curTab==="s") body=renderS();
   else body=renderA();
   document.getElementById("content").innerHTML=body;
 }
