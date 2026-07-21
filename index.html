@@ -2351,7 +2351,7 @@ function exportActs(){
 }
 
 // ═══════════════════ BREAKDOWN MODAL ═══════════════════
-function showBd(type){
+function showBd(type, arg){
   const modal=document.getElementById('bd-modal');
   const title=document.getElementById('bd-title');
   const body=document.getElementById('bd-body');
@@ -2463,6 +2463,37 @@ function showBd(type){
       <div style="flex:1"><div style="font-size:13px;font-weight:500">${p.name}</div><div style="font-size:11px;color:var(--sub2)">${p.customer||""}・${p.sites||1}サイト</div></div>
       <div style="text-align:right"><div style="font-weight:700;color:var(--red)">${yen(p.investAmount||0)}</div></div>
     </div>`).join("")||"<div style='text-align:center;padding:24px;color:var(--sub2)'>投資金額が入力された案件がありません</div>"}`;
+  } else if(type==='mitsumoriP'){
+    // 指定した締め期間の見積内訳（arg=何期前か）
+    function getPeriodP(offset){
+      const t=new Date();
+      let anchorY=t.getFullYear(), anchorM=t.getMonth();
+      if(t.getDate()>20)anchorM+=1;
+      anchorM+=offset;
+      return{ps:new Date(anchorY,anchorM-1,21),pe:new Date(anchorY,anchorM,20,23,59,59)};
+    }
+    const off=-(arg||0);
+    const per=getPeriodP(off);
+    const allMit=[];
+    Object.entries(acts).forEach(([key,list])=>{
+      const src=[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===key);
+      list.filter(a=>a.action==='見積提出').forEach(a=>{allMit.push({...a,srcId:key,srcName:src?src.name||src.customer:'不明',d:new Date(a.date)});});
+    });
+    const inP=allMit.filter(a=>a.d>=per.ps&&a.d<=per.pe).sort((a,b)=>b.d-a.d);
+    const total=inP.reduce((s,a)=>s+(a.count||1),0);
+    const pLabel=(per.ps.getMonth()+1)+'/21〜'+(per.pe.getMonth()+1)+'/20';
+    titleText='見積件数 内訳（'+pLabel+'）';
+    html=`<div style="text-align:center;padding:14px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
+      <div style="font-size:32px;font-weight:700;color:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:14px;font-weight:400;color:var(--sub2)"> / 20件</span></div>
+      <div style="font-size:11px;color:var(--sub2);margin-top:4px">${per.ps.toLocaleDateString('ja-JP')} 〜 ${per.pe.toLocaleDateString('ja-JP')} 締め</div>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">提出した案件一覧（クリックで詳細へ）</div>
+    ${inP.map(a=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-light);cursor:pointer;transition:background .1s" onclick="openActModal('${a.srcId}');closeBd()" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background=''">
+      <span style="font-size:11px;color:var(--sub2);white-space:nowrap;min-width:72px">${a.date}</span>
+      <span style="flex:1;font-size:13px;font-weight:500">${a.srcName}</span>
+      ${(a.count||1)>1?`<span class="badge ba">${a.count}件</span>`:'<span class="badge bgy">1件</span>'}
+      <i class="ti ti-chevron-right" style="font-size:12px;color:var(--sub2)"></i>
+    </div>`).join('')||'<div style="text-align:center;padding:24px;color:var(--sub2)">この期間の見積提出がありません</div>'}`;
   } else if(type==='mitsumori'){
     titleText='見積件数 詳細';
     // 締め期間を計算する関数（20日締め）
@@ -2514,7 +2545,7 @@ function showBd(type){
 
     <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">締め期間ごとの推移（過去12ヶ月）</div>
     <div style="margin-bottom:16px">
-      ${periodStats.map(p=>`<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+      ${periodStats.map((p,pi)=>`<div onclick="showBd('mitsumoriP',${pi})" style="display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer;padding:2px 4px;border-radius:6px;transition:background .1s" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='transparent'" title="クリックで内訳を表示">
         <span style="min-width:90px;font-size:11px;color:${p.isCurrent?'var(--blue)':'var(--sub2)'};font-weight:${p.isCurrent?'700':'400'};text-align:right;white-space:nowrap">${p.label}${p.isCurrent?' 📍':''}</span>
         <div style="flex:1;background:var(--border-light);border-radius:5px;height:18px;overflow:hidden;position:relative">
           <div style="width:${p.cnt/maxCnt*100}%;height:100%;background:${p.cnt>=20?'var(--green)':p.cnt>=10?'var(--amber)':p.isCurrent?'var(--blue)':'#9ca3af'};border-radius:5px;min-width:${p.cnt>0?'24px':'0'};display:flex;align-items:center;justify-content:flex-end;padding-right:6px">
@@ -2522,6 +2553,7 @@ function showBd(type){
           </div>
           ${p.cnt===0?'<span style="position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--sub2)">0</span>':''}
         </div>
+        <i class="ti ti-chevron-right" style="font-size:12px;color:var(--sub2);flex-shrink:0"></i>
       </div>`).join('')}
     </div>
 
