@@ -506,7 +506,7 @@ let newPPAForm={name:"",customer:"",assignee:"",status:"初期商談",contractYe
 let userSales=[];
 function getAllSales(){return userSales.filter(x=>!deletedIds.has(x.id));}
 let salesQ="", salesAssignee="すべて", salesKind="すべて", salesMonth="";
-let salesGoal=0; // crm/settings から読み込み
+let salesGoal=0, mitsumoriGoal=20; // crm/settings から読み込み
 const SALES_KINDS=["物販","PPA","工事","保守","その他"];
 const PPA_STATUSES=["初期商談","現地調査","提案中","見積作成中","最終交渉中","契約締結","設置工事","運用中","更新交渉中","失注","契約終了"];
 const PPA_STATUS_FLOW=[
@@ -763,6 +763,7 @@ function startListeners(){
     if(s.salesGoal!==undefined)salesGoal=s.salesGoal;
     if(s.annualGoalOrder!==undefined)annualGoalOrder=s.annualGoalOrder;
     if(s.annualGoalPPA!==undefined)annualGoalPPA=s.annualGoalPPA;
+    if(s.mitsumoriGoal!==undefined)mitsumoriGoal=s.mitsumoriGoal;
     render();
   });
   db.ref("crm/assignees").on("value",snap=>{
@@ -837,8 +838,19 @@ async function setDb(path, val){
   } else { saveLocal(); return true; }
 }
 
+function editMitsumoriGoal(){
+  const cur=mitsumoriGoal||20;
+  const v=prompt("見積件数の月次目標を入力してください（件）",cur);
+  if(v===null)return;
+  const n=parseInt(v,10);
+  if(isNaN(n)||n<1){toast("1以上の数字を入力してください");return;}
+  mitsumoriGoal=n;
+  saveSettings();
+  toast("✓ 見積目標を "+n+"件 に変更しました");
+  render();
+}
 async function saveSettings(){
-  await setDb("crm/settings",{salesGoal,annualGoalOrder,annualGoalPPA});
+  await setDb("crm/settings",{salesGoal,annualGoalOrder,annualGoalPPA,mitsumoriGoal});
 }
 // ── Unified case save (atomic) ──
 async function saveCase(p){
@@ -1659,7 +1671,7 @@ function renderD(){
   else{pEnd=new Date(now.getFullYear(),now.getMonth()+1,20,23,59,59);pStart=new Date(now.getFullYear(),now.getMonth(),21);}
   let mitsumoriCnt=0;
   Object.values(acts).flat().forEach(a=>{if(a.action==="見積提出"){const d=new Date(a.date);if(d>=pStart&&d<=pEnd)mitsumoriCnt+=(a.count||1);}});
-  const mitPct=Math.min(mitsumoriCnt/20*100,100);
+  const mitPct=Math.min(mitsumoriCnt/(mitsumoriGoal||20)*100,100);
   // 今月売上（20日締め）
   let salesStart,salesEnd;
   { const st=new Date(); let aY=st.getFullYear(),aM=st.getMonth(); if(st.getDate()>20)aM+=1; salesStart=new Date(aY,aM-1,21); salesEnd=new Date(aY,aM,20,23,59,59); }
@@ -1707,9 +1719,9 @@ function renderD(){
     </div>
     <div class="metric" style="border-left:3px solid var(--amber);cursor:pointer" onclick="showBd('mitsumori')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--amber-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-receipt" style="font-size:14px;color:var(--amber)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">見積件数 ›</span></div>
-      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/20</span></div>
-      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=20?"var(--green)":mitsumoriCnt>=10?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
-      <div style="font-size:10px;color:var(--sub2);margin-top:2px">${psStr}〜${peStr}締め</div>
+      <div style="font-size:22px;font-weight:700;color:${mitsumoriCnt>=(mitsumoriGoal||20)?"var(--green)":mitsumoriCnt>=(mitsumoriGoal||20)/2?"var(--amber)":"var(--text)"}">${mitsumoriCnt}<span style="font-size:12px;color:var(--sub2)">/${mitsumoriGoal||20}</span></div>
+      <div style="margin-top:5px;background:var(--border-light);border-radius:4px;height:5px;overflow:hidden"><div style="width:${mitPct.toFixed(0)}%;height:100%;background:${mitsumoriCnt>=(mitsumoriGoal||20)?"var(--green)":mitsumoriCnt>=(mitsumoriGoal||20)/2?"var(--amber)":"var(--blue)"};border-radius:4px"></div></div>
+      <div style="font-size:10px;color:var(--sub2);margin-top:2px;display:flex;align-items:center;justify-content:space-between;gap:4px"><span>${psStr}〜${peStr}締め</span><span onclick="event.stopPropagation();editMitsumoriGoal()" style="color:var(--blue);cursor:pointer;font-weight:600" title="目標を変更">⚙目標</span></div>
     </div>
     <div class="metric" style="border-left:3px solid var(--green);cursor:pointer" onclick="showBd('sales')">
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><div style="width:28px;height:28px;border-radius:8px;background:var(--green-light);display:flex;align-items:center;justify-content:center"><i class="ti ti-cash" style="font-size:14px;color:var(--green)"></i></div><span style="font-size:11px;font-weight:600;color:var(--sub)">今月売上 ›</span></div>
@@ -2484,7 +2496,7 @@ function showBd(type, arg){
     const pLabel=(per.ps.getMonth()+1)+'/21〜'+(per.pe.getMonth()+1)+'/20';
     titleText='見積件数 内訳（'+pLabel+'）';
     html=`<div style="text-align:center;padding:14px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
-      <div style="font-size:32px;font-weight:700;color:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:14px;font-weight:400;color:var(--sub2)"> / 20件</span></div>
+      <div style="font-size:32px;font-weight:700;color:${total>=(mitsumoriGoal||20)?'var(--green)':total>=(mitsumoriGoal||20)/2?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:14px;font-weight:400;color:var(--sub2)"> / ${mitsumoriGoal||20}件</span></div>
       <div style="font-size:11px;color:var(--sub2);margin-top:4px">${per.ps.toLocaleDateString('ja-JP')} 〜 ${per.pe.toLocaleDateString('ja-JP')} 締め</div>
     </div>
     <div style="font-size:12px;font-weight:600;color:var(--sub);margin-bottom:8px">提出した案件一覧（クリックで詳細へ）</div>
@@ -2534,12 +2546,12 @@ function showBd(type, arg){
     // 当期の一覧
     const mActs=allMit.filter(a=>a.d>=pStart&&a.d<=pEnd).sort((a,b)=>b.d-a.d);
     const total=mActs.reduce((s,a)=>s+(a.count||1),0);
-    const pct=Math.min(total/20*100,100);
+    const pct=Math.min(total/(mitsumoriGoal||20)*100,100);
     const maxCnt=Math.max(...periodStats.map(p=>p.cnt),1);
 
     html=`<div style="text-align:center;padding:14px;background:var(--bg);border-radius:var(--radius);margin-bottom:14px">
-      <div style="font-size:36px;font-weight:700;color:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:15px;font-weight:400;color:var(--sub2)"> / 20件</span></div>
-      <div style="margin:10px 0 6px;background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${total>=20?'var(--green)':total>=10?'var(--amber)':'var(--blue)'};border-radius:6px;transition:width .5s"></div></div>
+      <div style="font-size:36px;font-weight:700;color:${total>=(mitsumoriGoal||20)?'var(--green)':total>=(mitsumoriGoal||20)/2?'var(--amber)':'var(--blue)'}">${total}<span style="font-size:15px;font-weight:400;color:var(--sub2)"> / ${mitsumoriGoal||20}件</span></div>
+      <div style="margin:10px 0 6px;background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden"><div style="width:${pct}%;height:100%;background:${total>=(mitsumoriGoal||20)?'var(--green)':total>=(mitsumoriGoal||20)/2?'var(--amber)':'var(--blue)'};border-radius:6px;transition:width .5s"></div></div>
       <div style="font-size:11px;color:var(--sub2)">${pStart.toLocaleDateString('ja-JP')} 〜 ${pEnd.toLocaleDateString('ja-JP')} 締め（当期）</div>
     </div>
 
@@ -2548,7 +2560,7 @@ function showBd(type, arg){
       ${periodStats.map((p,pi)=>`<div onclick="showBd('mitsumoriP',${pi})" style="display:flex;align-items:center;gap:8px;margin-bottom:5px;cursor:pointer;padding:2px 4px;border-radius:6px;transition:background .1s" onmouseover="this.style.background='var(--bg)'" onmouseout="this.style.background='transparent'" title="クリックで内訳を表示">
         <span style="min-width:90px;font-size:11px;color:${p.isCurrent?'var(--blue)':'var(--sub2)'};font-weight:${p.isCurrent?'700':'400'};text-align:right;white-space:nowrap">${p.label}${p.isCurrent?' 📍':''}</span>
         <div style="flex:1;background:var(--border-light);border-radius:5px;height:18px;overflow:hidden;position:relative">
-          <div style="width:${p.cnt/maxCnt*100}%;height:100%;background:${p.cnt>=20?'var(--green)':p.cnt>=10?'var(--amber)':p.isCurrent?'var(--blue)':'#9ca3af'};border-radius:5px;min-width:${p.cnt>0?'24px':'0'};display:flex;align-items:center;justify-content:flex-end;padding-right:6px">
+          <div style="width:${p.cnt/maxCnt*100}%;height:100%;background:${p.cnt>=(mitsumoriGoal||20)?'var(--green)':p.cnt>=(mitsumoriGoal||20)/2?'var(--amber)':p.isCurrent?'var(--blue)':'#9ca3af'};border-radius:5px;min-width:${p.cnt>0?'24px':'0'};display:flex;align-items:center;justify-content:flex-end;padding-right:6px">
             ${p.cnt>0?`<span style="font-size:10px;color:#fff;font-weight:700">${p.cnt}</span>`:''}
           </div>
           ${p.cnt===0?'<span style="position:absolute;left:6px;top:50%;transform:translateY(-50%);font-size:10px;color:var(--sub2)">0</span>':''}
