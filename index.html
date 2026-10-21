@@ -2633,6 +2633,12 @@ function heatBadge(h){return hb(h);}
 
 
 function render(){
+  // フォーカス中の検索入力の状態を保存（再描画でカーソルが飛ぶのを防ぐ）
+  const ae=document.activeElement;
+  let focusInfo=null;
+  if(ae&&ae.tagName==='INPUT'&&ae.getAttribute('oninput')&&/Q=this\.value/.test(ae.getAttribute('oninput'))){
+    focusInfo={oninput:ae.getAttribute('oninput'),start:ae.selectionStart,end:ae.selectionEnd,val:ae.value};
+  }
   let body;
   if(curTab==="d") body=renderD();
   else if(curTab==="c") body=renderC();
@@ -2642,6 +2648,17 @@ function render(){
   else if(curTab==="s") body=renderS();
   else body=renderA();
   document.getElementById("content").innerHTML=body;
+  // フォーカスを復元
+  if(focusInfo){
+    const inputs=document.querySelectorAll('#content input[oninput]');
+    for(const inp of inputs){
+      if(inp.getAttribute('oninput')===focusInfo.oninput){
+        inp.focus();
+        try{inp.setSelectionRange(focusInfo.start,focusInfo.end);}catch(e){}
+        break;
+      }
+    }
+  }
 }
 
 // ═══════════════════ INIT ═══════════════════
