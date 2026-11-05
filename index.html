@@ -2727,12 +2727,16 @@ const GCAL_TZ="Asia/Tokyo";
 const GCAL_HOUR=9;          // 予定の開始時刻（9:00〜9:30）
 const GCAL_REMIND=[0,1440]; // 通知：開始時刻と前日同時刻（分）
 const GCAL_API="https://www.googleapis.com/calendar/v3/calendars/primary/events";
+// 当面は以下のアカウントのみで有効（試行運用）。チームに広げる際はここにメールアドレスを追加する
+const GCAL_ALLOWED_USERS=["r.hirayama@kaku-ichi.co.jp"];
+const GCAL_BULK_ASSIGNEE="平山"; // 一括登録の対象にする担当者名
+function gcalAllowed(){return !!GCAL_CLIENT_ID&&GCAL_ALLOWED_USERS.includes(gcalMe());}
 let _gcalToken=null,_gcalExp=0;
 
-function gcalReady(){return !!GCAL_CLIENT_ID&&!!(window.google&&google.accounts&&google.accounts.oauth2);}
+function gcalReady(){return gcalAllowed()&&!!(window.google&&google.accounts&&google.accounts.oauth2);}
 function gcalMe(){return (currentUser&&currentUser.email||"").toLowerCase();}
-function gcalWants(a){return !!(a&&a.nextDate&&GCAL_CLIENT_ID&&(a.calEventId||a.nextDate>=today()));}
-function gcalOwns(a){return !!(a&&a.calEventId&&GCAL_CLIENT_ID&&(a.calOwner||"").toLowerCase()===gcalMe());}
+function gcalWants(a){return !!(a&&a.nextDate&&gcalAllowed()&&(a.calEventId||a.nextDate>=today()));}
+function gcalOwns(a){return !!(a&&a.calEventId&&gcalAllowed()&&(a.calOwner||"").toLowerCase()===gcalMe());}
 
 function gcalEnsureToken(force){
   if(!gcalReady())return Promise.resolve(null);
@@ -2833,7 +2837,7 @@ async function gcalDeleteEvent(a,tokenP){
 function gcalUpdateBadge(){
   const btn=document.getElementById("gcal-btn"),lbl=document.getElementById("gcal-label");
   if(!btn||!lbl)return;
-  if(!GCAL_CLIENT_ID){btn.style.display="none";return;}
+  if(!gcalAllowed()){btn.style.display="none";return;}
   btn.style.display="flex";
   const on=_gcalToken&&Date.now()<_gcalExp;
   lbl.textContent=on?"カレンダー連携中":"カレンダー未連携";
@@ -2849,10 +2853,10 @@ async function gcalMenu(){
   const t=today();
   const pending=[];
   Object.entries(acts).forEach(([key,list])=>{
-    (list||[]).forEach(a=>{if(a.nextDate&&a.nextDate>=t&&!a.calEventId&&gcalFindSrc(key))pending.push([key,a]);});
+    (list||[]).forEach(a=>{const src=gcalFindSrc(key);if(a.nextDate&&a.nextDate>=t&&!a.calEventId&&src&&((a.assignee||"").includes(GCAL_BULK_ASSIGNEE)||(src.assignee||"").includes(GCAL_BULK_ASSIGNEE)))pending.push([key,a]);});
   });
   if(!pending.length){toast("🗓 カレンダーと連携しました（未登録の予定はありません）");return;}
-  if(!confirm(`今日以降の次回アクションのうち、カレンダー未登録が ${pending.length} 件あります。\nあなたのGoogleカレンダーに登録しますか？`)){toast("🗓 カレンダーと連携しました");return;}
+  if(!confirm(`担当「${GCAL_BULK_ASSIGNEE}」の今日以降の次回アクションのうち、カレンダー未登録が ${pending.length} 件あります。\nあなたのGoogleカレンダーに登録しますか？`)){toast("🗓 カレンダーと連携しました");return;}
   const touched=new Set();let n=0;
   for(const [key,a] of pending){
     if(await gcalSync(key,a,Promise.resolve(token))){touched.add(key);n++;}
