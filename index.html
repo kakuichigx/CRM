@@ -279,6 +279,9 @@ tr.sel td{background:var(--blue-light)}
     <div id="sync-dot"></div>
     <span id="sync-label" style="font-size:11px;color:var(--sub2)">接続中…</span>
   </div>
+  <button id="gcal-btn" onclick="gcalMenu()" title="Googleカレンダー連携" style="display:none;align-items:center;gap:5px;margin-left:8px;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:11px;color:var(--sub2)">
+    <i class="ti ti-calendar" style="font-size:14px"></i><span id="gcal-label">カレンダー未連携</span>
+  </button>
   <button id="user-menu-btn" onclick="doLogout()" title="ログアウト" style="display:flex;align-items:center;gap:6px;margin-left:8px;padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:11px;color:var(--sub2)">
     <span id="user-email" style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
     <i class="ti ti-logout" style="font-size:14px"></i>
@@ -470,6 +473,7 @@ tr.sel td{background:var(--blue-light)}
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <script>
 // ═══════════════════ STATIC DATA ═══════════════════
@@ -898,10 +902,12 @@ async function addActDOM(key){
   const countVal=action==='見積提出'?Math.max(1,parseInt(document.getElementById('ap-count')?.value||'1',10)):1;
   if(!detail){toast("内容を入力してください");document.getElementById('ap-detail')?.focus();return;}
   const entry={id:Date.now().toString(36),date,action,detail,assignee,nextDate,tags:[..._apTags],count:countVal};
+  const calP=gcalWants(entry)?gcalEnsureToken():null; // クリック直後に認可を開始（ポップアップ抑止を回避）
   if(!acts[key])acts[key]=[];
   acts[key].unshift(entry);
   const ok=await setDb("crm/acts/"+key, acts[key]);
   if(!ok){acts[key].shift();return;}
+  if(calP)gcalSyncAndSave(key,entry,calP);
   _apTags=[];
   // Clear form
   const fields=['ap-detail','ap-assignee','ap-tag'];
@@ -952,16 +958,21 @@ async function addActDOM(key){
 async function addAct(key){
   if(!form.detail.trim()){toast("内容を入力してください");return;}
   const entry={id:Date.now().toString(36),date:form.date,action:form.action,detail:form.detail.trim(),assignee:form.assignee.trim(),nextDate:form.nextDate,tags:[...form.tags]};
+  const calP=gcalWants(entry)?gcalEnsureToken():null;
   if(!acts[key])acts[key]=[];
   const updated=[entry,...acts[key]];
   acts[key]=updated;
   await setDb("crm/acts/"+key, updated);
+  if(calP)gcalSyncAndSave(key,entry,calP);
   form={date:today(),action:"訪問",detail:"",assignee:"",nextDate:"",tags:[]};tagInput="";
   toast("✓ 保存しました（チームに同期）");render();
 }
 async function delAct(key,id){
   if(!acts[key])return;
+  const removed=acts[key].find(a=>a.id===id);
+  const calP=gcalOwns(removed)?gcalEnsureToken():null;
   acts[key]=acts[key].filter(a=>a.id!==id);
+  if(calP)gcalDeleteEvent(removed,calP);
   await setDb("crm/acts/"+key, acts[key].length?acts[key]:null);
   toast("削除しました");render();
 }
@@ -1589,8 +1600,10 @@ async function saveEditAct(){
   const idx=list.findIndex(a=>a.id===editActId);
   if(idx<0)return;
   list[idx]={...list[idx],...editActForm,tags:[...editActForm.tags]};
+  const calP=(gcalWants(list[idx])||gcalOwns(list[idx]))?gcalEnsureToken():null;
   acts[editActKey]=list;
   await setDb("crm/acts/"+editActKey, list);
+  if(calP)gcalSyncAndSave(editActKey,list[idx],calP);
   editActKey=null; editActId=null; editActForm=null;
   toast("✓ 活動履歴を更新しました");
   // refresh modal
@@ -1602,16 +1615,17 @@ function editActInline(key,id,btn){
   const card=btn.closest('.act-card');
   const bodyDiv=card.querySelector('.act-edit-body');
   if(bodyDiv){bodyDiv.remove();return;}
+  window._inlineAct={...a};
   const div=document.createElement('div');div.className='act-edit-body';
   div.style.cssText='margin-top:8px;background:#f0f7ff;border-radius:8px;padding:10px;';
   div.innerHTML=`
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
-      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">日付</div><input type="date" value="${a.date}" onchange="a.date=this.value" style="font-size:12px;padding:5px 8px"></div>
-      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">アクション</div><select onchange="a.action=this.value" style="font-size:12px;padding:5px 8px">${['訪問','電話','メール','オンライン会議','打ち合わせ','資料送付','見積提出','その他'].map(t=>`<option${t===a.action?' selected':''}>${t}</option>`).join('')}</select></div>
-      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">次回アクション日</div><input type="date" value="${a.nextDate||''}" onchange="a.nextDate=this.value" style="font-size:12px;padding:5px 8px"></div>
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">日付</div><input type="date" value="${a.date}" onchange="_inlineAct.date=this.value" style="font-size:12px;padding:5px 8px"></div>
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">アクション</div><select onchange="_inlineAct.action=this.value" style="font-size:12px;padding:5px 8px">${['訪問','電話','メール','オンライン会議','打ち合わせ','資料送付','見積提出','その他'].map(t=>`<option${t===a.action?' selected':''}>${t}</option>`).join('')}</select></div>
+      <div><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">次回アクション日</div><input type="date" value="${a.nextDate||''}" onchange="_inlineAct.nextDate=this.value" style="font-size:12px;padding:5px 8px"></div>
     </div>
-    <div style="margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">内容</div><textarea style="font-size:12px;padding:6px 8px;min-height:56px;line-height:1.5" onchange="a.detail=this.value">${a.detail}</textarea></div>
-    <div style="margin-bottom:8px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">担当者</div><input value="${a.assignee||''}" onchange="a.assignee=this.value" style="font-size:12px;padding:5px 8px"></div>
+    <div style="margin-bottom:6px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">内容</div><textarea style="font-size:12px;padding:6px 8px;min-height:56px;line-height:1.5" onchange="_inlineAct.detail=this.value">${a.detail}</textarea></div>
+    <div style="margin-bottom:8px"><div style="font-size:11px;font-weight:600;color:var(--sub);margin-bottom:3px">担当者</div><input value="${a.assignee||''}" onchange="_inlineAct.assignee=this.value" style="font-size:12px;padding:5px 8px"></div>
     <div style="display:flex;gap:6px;justify-content:flex-end">
       <button class="btn" style="font-size:12px;padding:5px 12px" onclick="this.closest('.act-edit-body').remove()">キャンセル</button>
       <button class="btn btn-p" style="font-size:12px;padding:5px 12px" onclick="saveInlineAct('${key}','${id}',this)">保存</button>
@@ -1620,7 +1634,14 @@ function editActInline(key,id,btn){
 }
 async function saveInlineAct(key,id,btn){
   const list=acts[key]||[];
+  const idx=list.findIndex(x=>x.id===id);
+  let calP=null;
+  if(idx>=0&&window._inlineAct&&window._inlineAct.id===id){
+    list[idx]={...list[idx],...window._inlineAct};
+    if(gcalWants(list[idx])||gcalOwns(list[idx]))calP=gcalEnsureToken();
+  }
   await setDb("crm/acts/"+key, list.length?list:null);
+  if(calP)gcalSyncAndSave(key,list[idx],calP);
   toast("✓ 更新しました");
   btn.closest('.act-edit-body').remove();
   openActModal(key);
@@ -2696,6 +2717,151 @@ function checkNotifications(){
 // Check notifications every 30 minutes
 setInterval(checkNotifications, 30*60*1000);
 
+
+// ═══════════════════ Googleカレンダー連携 ═══════════════════
+// 「次回アクション日」を入力すると、保存した人のGoogleカレンダーに予定を自動作成する。
+// 編集すれば予定も更新、次回アクション日を消すか活動を削除すれば予定も削除する。
+const GCAL_CLIENT_ID=""; // ← Google Cloud の OAuth 2.0 クライアントID（〜.apps.googleusercontent.com）を設定すると有効化
+const GCAL_SCOPE="https://www.googleapis.com/auth/calendar.events";
+const GCAL_TZ="Asia/Tokyo";
+const GCAL_HOUR=9;          // 予定の開始時刻（9:00〜9:30）
+const GCAL_REMIND=[0,1440]; // 通知：開始時刻と前日同時刻（分）
+const GCAL_API="https://www.googleapis.com/calendar/v3/calendars/primary/events";
+let _gcalToken=null,_gcalExp=0;
+
+function gcalReady(){return !!GCAL_CLIENT_ID&&!!(window.google&&google.accounts&&google.accounts.oauth2);}
+function gcalMe(){return (currentUser&&currentUser.email||"").toLowerCase();}
+function gcalWants(a){return !!(a&&a.nextDate&&GCAL_CLIENT_ID&&(a.calEventId||a.nextDate>=today()));}
+function gcalOwns(a){return !!(a&&a.calEventId&&GCAL_CLIENT_ID&&(a.calOwner||"").toLowerCase()===gcalMe());}
+
+function gcalEnsureToken(force){
+  if(!gcalReady())return Promise.resolve(null);
+  if(!force&&_gcalToken&&Date.now()<_gcalExp-60000)return Promise.resolve(_gcalToken);
+  return new Promise(resolve=>{
+    try{
+      const client=google.accounts.oauth2.initTokenClient({
+        client_id:GCAL_CLIENT_ID,scope:GCAL_SCOPE,hint:gcalMe(),
+        callback:r=>{
+          if(r&&r.access_token){_gcalToken=r.access_token;_gcalExp=Date.now()+(Number(r.expires_in)||3600)*1000;gcalUpdateBadge();resolve(_gcalToken);}
+          else{gcalUpdateBadge();resolve(null);}
+        },
+        error_callback:e=>{console.warn("gcal auth",e);gcalUpdateBadge();resolve(null);}
+      });
+      client.requestAccessToken({prompt:""});
+    }catch(e){console.error("gcal auth",e);resolve(null);}
+  });
+}
+
+async function gcalFetch(method,url,token,body){
+  const res=await fetch(url,{method,headers:{Authorization:"Bearer "+token,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});
+  if(res.status===401){_gcalToken=null;_gcalExp=0;gcalUpdateBadge();}
+  return res;
+}
+
+function gcalFindSrc(key){return[...getAllCases(),...getAllBankCases(),...getAllPPACases(),...getAllCities()].find(x=>x.id===key);}
+
+function gcalEventBody(key,a){
+  const src=gcalFindSrc(key)||{};
+  const name=src.name||src.customer||"案件";
+  const title=src.customer&&src.customer!==name?`${name}（${src.customer}）`:name;
+  const pad=n=>String(n).padStart(2,"0");
+  const lines=[
+    `案件：${title}`,
+    src.status?`ステータス：${src.status}`:"",
+    `前回：${a.date||""} ${a.action||""}`,
+    a.detail?`内容：${a.detail}`:"",
+    a.assignee?`担当：${a.assignee}`:"",
+  ].filter(Boolean);
+  return{
+    summary:`【連絡】${title}`,
+    description:lines.join("\n")+"\n\nCRM："+location.origin+location.pathname,
+    start:{dateTime:`${a.nextDate}T${pad(GCAL_HOUR)}:00:00`,timeZone:GCAL_TZ},
+    end:{dateTime:`${a.nextDate}T${pad(GCAL_HOUR)}:30:00`,timeZone:GCAL_TZ},
+    reminders:{useDefault:false,overrides:GCAL_REMIND.map(m=>({method:"popup",minutes:m}))},
+    extendedProperties:{private:{crmKey:String(key),crmActId:String(a.id)}}
+  };
+}
+
+// 予定を作成・更新・削除する。活動データ(a)の calEventId / calOwner を書き換えた場合 true
+async function gcalSync(key,a,tokenP){
+  const token=await tokenP;
+  if(!token||!a)return false;
+  if(a.calEventId&&!gcalOwns(a)){toast("この予定は他のメンバーのカレンダーにあるため更新しません");return false;}
+  try{
+    if(!a.nextDate){
+      if(!a.calEventId)return false;
+      const r=await gcalFetch("DELETE",GCAL_API+"/"+encodeURIComponent(a.calEventId),token);
+      if(!r.ok&&r.status!==404&&r.status!==410)throw new Error("HTTP "+r.status);
+      delete a.calEventId;delete a.calOwner;
+      toast("🗓 カレンダーの予定を削除しました");
+      return true;
+    }
+    const body=gcalEventBody(key,a);
+    if(a.calEventId){
+      const r=await gcalFetch("PATCH",GCAL_API+"/"+encodeURIComponent(a.calEventId),token,body);
+      if(r.ok){toast("🗓 カレンダーの予定を更新しました");return false;}
+      if(r.status!==404&&r.status!==410)throw new Error("HTTP "+r.status);
+      // 予定が手動で削除されていた場合は作り直す
+    }
+    const r=await gcalFetch("POST",GCAL_API,token,body);
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const ev=await r.json();
+    a.calEventId=ev.id;a.calOwner=gcalMe();
+    toast(`🗓 ${a.nextDate.slice(5).replace("-","/")} の予定をカレンダーに登録しました`);
+    return true;
+  }catch(e){
+    console.error("gcal sync",e);
+    toast("カレンダー連携に失敗しました（"+e.message+"）");
+    return false;
+  }
+}
+
+async function gcalSyncAndSave(key,a,tokenP){
+  const changed=await gcalSync(key,a,tokenP);
+  if(changed&&acts[key])await setDb("crm/acts/"+key,acts[key]);
+}
+
+async function gcalDeleteEvent(a,tokenP){
+  const token=await tokenP;
+  if(!token||!a||!a.calEventId)return;
+  try{
+    const r=await gcalFetch("DELETE",GCAL_API+"/"+encodeURIComponent(a.calEventId),token);
+    if(r.ok||r.status===404||r.status===410)toast("🗓 カレンダーの予定も削除しました");
+  }catch(e){console.error("gcal delete",e);}
+}
+
+function gcalUpdateBadge(){
+  const btn=document.getElementById("gcal-btn"),lbl=document.getElementById("gcal-label");
+  if(!btn||!lbl)return;
+  if(!GCAL_CLIENT_ID){btn.style.display="none";return;}
+  btn.style.display="flex";
+  const on=_gcalToken&&Date.now()<_gcalExp;
+  lbl.textContent=on?"カレンダー連携中":"カレンダー未連携";
+  btn.style.color=on?"var(--green)":"var(--sub2)";
+}
+
+// ヘッダーのボタン：連携の開始と、未登録の次回アクションの一括登録
+async function gcalMenu(){
+  if(!gcalReady()){toast("Googleの認証ライブラリを読み込み中です。少し待ってから再度お試しください");return;}
+  const tokenP=gcalEnsureToken();
+  const token=await tokenP;
+  if(!token){toast("カレンダー連携が許可されませんでした");return;}
+  const t=today();
+  const pending=[];
+  Object.entries(acts).forEach(([key,list])=>{
+    (list||[]).forEach(a=>{if(a.nextDate&&a.nextDate>=t&&!a.calEventId&&gcalFindSrc(key))pending.push([key,a]);});
+  });
+  if(!pending.length){toast("🗓 カレンダーと連携しました（未登録の予定はありません）");return;}
+  if(!confirm(`今日以降の次回アクションのうち、カレンダー未登録が ${pending.length} 件あります。\nあなたのGoogleカレンダーに登録しますか？`)){toast("🗓 カレンダーと連携しました");return;}
+  const touched=new Set();let n=0;
+  for(const [key,a] of pending){
+    if(await gcalSync(key,a,Promise.resolve(token))){touched.add(key);n++;}
+  }
+  for(const key of touched)await setDb("crm/acts/"+key,acts[key]);
+  toast(`🗓 ${n} 件をカレンダーに登録しました`);
+}
+setInterval(gcalUpdateBadge,60*1000);
+
 // ═══ 認証設定 ═══
 const ALLOWED_DOMAIN="kaku-ichi.co.jp"; // このドメインのみ許可
 const FB_CONFIG={
@@ -2765,6 +2931,7 @@ async function doLogout(){
       startListeners();
       render();
       setTimeout(requestNotificationPermission, 2000);
+      gcalUpdateBadge();
     } else {
       // 未ログイン → ゲート表示
       currentUser=null;
